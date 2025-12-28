@@ -135,7 +135,7 @@ fn fs_beam(in: VSOut) -> @location(0) vec4f {
     return vec4f(faded, 1.0);
   }
 
-  let srcCoord = uvw * srcSize;
+  var srcCoord = uvw * srcSize;
   let lineHash = hash21(vec2f(floor(uvw.y * dstSize.y), floor(time * 120.0)));
   srcCoord.x += (lineHash - 0.5) * syncJitter * 2.0;
 
