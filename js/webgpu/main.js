@@ -45,7 +45,6 @@ import { wgslSource } from './shader.js';
   let historyTexH = 0;
   let historyValid = false;
   let historyFormat = 'rgba16float';
-  let historySampleType = 'unfilterable-float';
   let lastFrameTime = 0;
   let sourceTexW = 0;
   let sourceTexH = 0;
@@ -1274,7 +1273,6 @@ import { wgslSource } from './shader.js';
     const requiredFeatures = supports16f ? ['texture-format-16-bit-float'] : [];
     device = await adapter.requestDevice({ requiredFeatures });
     historyFormat = supports16f ? 'rgba16float' : 'rgba8unorm';
-    historySampleType = supports16f ? 'unfilterable-float' : 'float';
     device.addEventListener('uncapturederror', (event) => {
       console.error('WebGPU uncaptured error', event.error);
       setStatus(`WebGPU error: ${event.error?.message || 'Unknown'}`, 'bad');
@@ -1307,7 +1305,7 @@ import { wgslSource } from './shader.js';
         { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
         { binding: 2, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
         { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: {} },
-        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: historySampleType } },
+        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
       ],
     });
     pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] });
@@ -1364,19 +1362,27 @@ import { wgslSource } from './shader.js';
         console.warn('Shader compilation info unavailable', err);
       });
     }
+    const pushScope = gpuDebug ? () => device.pushErrorScope('validation') : () => {};
+    const popScope = gpuDebug
+      ? () => device.popErrorScope().then((err) => err && console.error('Pipeline validation error', err))
+      : () => Promise.resolve();
     try {
+      pushScope();
       beamPipeline = device.createRenderPipeline({
         layout: pipelineLayout,
         vertex: { module: shaderModule, entryPoint: 'vs' },
         fragment: { module: shaderModule, entryPoint: 'fs_beam', targets: [{ format: historyFormat }] },
         primitive: { topology: 'triangle-list' },
       });
+      popScope();
+      pushScope();
       finalPipeline = device.createRenderPipeline({
         layout: pipelineLayout,
         vertex: { module: shaderModule, entryPoint: 'vs' },
         fragment: { module: shaderModule, entryPoint: 'fs_final', targets: [{ format: configuredFormat }] },
         primitive: { topology: 'triangle-list' },
       });
+      popScope();
     } catch (err) {
       console.error('Pipeline creation failed', err);
       setStatus(`Pipeline error: ${err.message || 'Unknown'}`, 'bad');
