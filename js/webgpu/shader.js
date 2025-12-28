@@ -333,7 +333,6 @@ fn fs_final(in: VSOut) -> @location(0) vec4f {
   let vignette = v7.w;
   let postContrast = v8.x;
   let postSaturation = v8.y;
-  let postBrightness = v8.z;
   let time = v9.x;
   let syncJitter = v9.y;
   let syncJitterSpeed = v9.z;
@@ -422,7 +421,6 @@ fn fs_final(in: VSOut) -> @location(0) vec4f {
     col = clamp(col, vec3f(0.0), vec3f(6.0));
   }
 
-  col = max(col + vec3f(postBrightness), vec3f(0.0));
   col = (col - vec3f(0.5)) * postContrast + vec3f(0.5);
   col = max(col, vec3f(0.0));
   let Y = luma(col);

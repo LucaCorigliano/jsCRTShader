@@ -22,7 +22,7 @@ import { wgslSource } from './shader.js';
     'scanline','persistence','beamMin','beamMax','sharp','caX','caY','caEdge','energyLock',
     'bloom','bloomSigma','halation','halationSigma','chromaSpill','chromaSigma','chromaGain',
     'blackSpill','blackSigma','maskStr','maskContrast',
-    'maskRound','gamma','hdrGain','hdrHighlights','curvature','vignette','postContrast','postSaturation','postBrightness',
+    'maskRound','gamma','hdrGain','hdrHighlights','curvature','vignette','postContrast','postSaturation',
     'spillBias','pixelShape','syncJitter','syncJitterSpeed','rollingBand','rollingBandSpeed','noiseStrength'
   ];
 
@@ -123,7 +123,6 @@ import { wgslSource } from './shader.js';
     hdrHighlights: 1.0,
     postContrast: 1.08,
     postSaturation: 0.69,
-    postBrightness: -0.01,
     spillBias: -0.06,
     syncJitter: 0.06,
     syncJitterSpeed: 1.2,
@@ -235,7 +234,7 @@ import { wgslSource } from './shader.js';
 
     uniformData[32] = params.postContrast; // v8
     uniformData[33] = params.postSaturation;
-    uniformData[34] = params.postBrightness;
+    uniformData[34] = 0.0;
     uniformData[35] = params.spillBias;
 
     uniformData[36] = params.time; // v9
@@ -1588,7 +1587,6 @@ import { wgslSource } from './shader.js';
     bindRange('vignette', (v) => (params.vignette = v));
     bindRange('postContrast', (v) => (params.postContrast = v));
     bindRange('postSaturation', (v) => (params.postSaturation = v));
-    bindRange('postBrightness', (v) => (params.postBrightness = v));
     bindRange('hdrGain', (v) => (params.hdrGain = v));
     bindRange('hdrHighlights', (v) => (params.hdrHighlights = v));
     bindRange('spillBias', (v) => (params.spillBias = v));
