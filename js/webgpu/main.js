@@ -251,7 +251,7 @@ import { wgslSource } from './shader.js';
     uniformData[44] = params.debugHDR ? 1.0 : 0.0; // v11
     uniformData[45] = params.hdrGain;
     uniformData[46] = params.hdrHighlights;
-    uniformData[47] = 0.0;
+    uniformData[47] = historyFormat === 'rgba16float' ? 0.0 : 1.0;
 
     device.queue.writeBuffer(uniformBuffer, 0, uniformData.buffer);
   }
@@ -327,7 +327,7 @@ import { wgslSource } from './shader.js';
     ensureSourceTexture(w, h);
     try {
       device.queue.copyExternalImageToTexture(
-        { source: sourceElement, flipY: true },
+        { source: sourceElement, flipY: false },
         { texture: sourceTexture },
         { width: w, height: h }
       );

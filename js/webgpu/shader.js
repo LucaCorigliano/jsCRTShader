@@ -28,6 +28,8 @@ fn vs(@builtin(vertex_index) vid : u32) -> VSOut {
 
 fn saturate(x: f32) -> f32 { return clamp(x, 0.0, 1.0); }
 fn saturate3(v: vec3f) -> vec3f { return clamp(v, vec3f(0.0), vec3f(1.0)); }
+fn hdrEncode(c: vec3f) -> vec3f { return c / (c + vec3f(1.0)); }
+fn hdrDecode(c: vec3f) -> vec3f { return c / max(vec3f(1.0) - c, vec3f(1e-4)); }
 fn hash21(p: vec2f) -> f32 {
   let h = dot(p, vec2f(127.1, 311.7));
   return fract(sin(h) * 43758.5453123);
@@ -123,12 +125,18 @@ fn fs_beam(in: VSOut) -> @location(0) vec4f {
   let hdrGain = v11.y;
   let hdrHighlights = v11.z;
 
-  let prev = sampleHistory(in.uv);
+  let uvIn = vec2f(in.uv.x, 1.0 - in.uv.y);
+  let historyLdr = v11.w;
+  let prevEncoded = sampleHistory(uvIn);
+  var prev = prevEncoded;
+  if (historyLdr > 0.5) {
+    prev = hdrDecode(prevEncoded);
+  }
   if (bypass > 0.5) {
     return vec4f(prev, 1.0);
   }
 
-  let warped = warpUv(in.uv, dstSize, curvature, time, syncJitter, syncJitterSpeed);
+  let warped = warpUv(uvIn, dstSize, curvature, time, syncJitter, syncJitterSpeed);
   let uvw = warped.xy;
   if (uvw.x < 0.0 || uvw.x > 1.0 || uvw.y < 0.0 || uvw.y > 1.0) {
     let faded = prev * decay;
@@ -294,7 +302,11 @@ fn fs_beam(in: VSOut) -> @location(0) vec4f {
   beamColor += vec3f(hdrBoost * max(0.0, hdrHighlights));
 
   let mixed = prev * decay + beamColor * (vec3f(1.0) - decay);
-  return vec4f(max(mixed, vec3f(0.0)), 1.0);
+  var outColor = max(mixed, vec3f(0.0));
+  if (historyLdr > 0.5) {
+    outColor = hdrEncode(outColor);
+  }
+  return vec4f(outColor, 1.0);
 }
 
 @fragment
@@ -331,6 +343,7 @@ fn fs_final(in: VSOut) -> @location(0) vec4f {
   let bypass = v10.z;
   let maskType = u32(v10.w + 0.5);
   let debugHDR = v11.x;
+  let historyLdr = v11.w;
   let maskThickness = P.data[5].x;
 
   if (bypass > 0.5) {
@@ -339,7 +352,8 @@ fn fs_final(in: VSOut) -> @location(0) vec4f {
     return vec4f(col, 1.0);
   }
 
-  let warped = warpUv(in.uv, dstSize, curvature, time, syncJitter, syncJitterSpeed);
+  let uvIn = vec2f(in.uv.x, 1.0 - in.uv.y);
+  let warped = warpUv(uvIn, dstSize, curvature, time, syncJitter, syncJitterSpeed);
   let uvw = warped.xy;
   let dist = warped.z;
   if (uvw.x < 0.0 || uvw.x > 1.0 || uvw.y < 0.0 || uvw.y > 1.0) {
@@ -347,7 +361,11 @@ fn fs_final(in: VSOut) -> @location(0) vec4f {
     return vec4f(bezel, 1.0);
   }
 
-  var col = sampleHistory(in.uv);
+  let histEncoded = sampleHistory(uvIn);
+  var col = histEncoded;
+  if (historyLdr > 0.5) {
+    col = hdrDecode(histEncoded);
+  }
 
   let srcCoord = uvw * srcSize;
   let yCenter = floor(srcCoord.y) + 0.5;
