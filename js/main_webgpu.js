@@ -1,0 +1,1 @@
+import './webgpu/main.js';

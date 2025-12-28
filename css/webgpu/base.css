@@ -1,0 +1,40 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Spline+Sans+Mono:wght@400;600&display=swap');
+
+:root {
+  --bg: #0a0b0e;
+  --panel: rgba(17, 19, 26, 0.86);
+  --panel-solid: #11141b;
+  --border: rgba(255, 255, 255, 0.08);
+  --muted: rgba(226, 227, 235, 0.65);
+  --text: #e6e7ee;
+  --accent: #ffb347;
+  --accent-2: #00c2a8;
+  --glow: rgba(255, 179, 71, 0.22);
+  --slider-track: rgba(255, 255, 255, 0.18);
+  --slider-thumb: #ffb347;
+  --slider-thumb-shadow: rgba(255, 179, 71, 0.4);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+body.webgpu-ui {
+  margin: 0;
+  font-family: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+  color: var(--text);
+  background:
+    radial-gradient(circle at 12% 8%, rgba(255, 179, 71, 0.18), transparent 45%),
+    radial-gradient(circle at 92% 88%, rgba(0, 194, 168, 0.16), transparent 50%),
+    var(--bg);
+  display: flex;
+  flex-direction: column;
+}

@@ -1,0 +1,3 @@
+[submodule "libs/enge-js"]
+	path = libs/enge-js
+	url = https://github.com/kootstra-rene/enge-js

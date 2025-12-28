@@ -1,0 +1,81 @@
+@media (max-width: 1200px) {
+  .layout {
+    grid-template-columns: 1fr;
+    height: auto;
+  }
+
+  body.hide-left .layout,
+  body.hide-right .layout {
+    grid-template-columns: 1fr;
+  }
+
+  .panel {
+    order: 2;
+  }
+
+  .stage-card {
+    order: 1;
+    min-height: 320px;
+  }
+}
+
+@media (max-width: 720px) {
+  .topbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  label {
+    grid-template-columns: minmax(90px, 1fr) minmax(0, 1fr) 48px;
+  }
+}
+
+@media (max-width: 520px) {
+  label {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .label-text {
+    white-space: normal;
+    overflow: visible;
+  }
+
+  label select,
+  label input[type="number"],
+  label input[type="text"],
+  label input[type="file"],
+  label input[type="range"] {
+    grid-column: 1 / -1;
+  }
+
+  label span[id$="V"] {
+    justify-self: end;
+  }
+}
+
+body.fullscreen .topbar,
+body.fullscreen .panel,
+body.fullscreen .dock,
+body.fullscreen .stage-header {
+  display: none;
+}
+
+body.fullscreen .layout {
+  grid-template-columns: minmax(0, 1fr);
+  padding: 0;
+  gap: 0;
+}
+
+body.fullscreen .stage-card {
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+body.fullscreen .stage {
+  border: none;
+  border-radius: 0;
+}

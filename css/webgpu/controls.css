@@ -1,0 +1,242 @@
+.row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  width: 100%;
+  min-width: 0;
+}
+
+.row > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.row label {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.row input[type="text"] {
+  flex: 1;
+  min-width: 0;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+label {
+  display: grid;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  grid-template-columns: minmax(100px, 40%) minmax(0, 1fr) 52px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  max-width: 100%;
+}
+
+label > * {
+  min-width: 0;
+}
+
+.card label:nth-of-type(odd),
+.row label:nth-of-type(odd) {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.card label:nth-of-type(even),
+.row label:nth-of-type(even) {
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.label-text {
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.row label:not(.toggle) {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.row label:not(.toggle) .label-text {
+  width: 100%;
+}
+
+.row label:not(.toggle) input,
+.row label:not(.toggle) select {
+  width: 100%;
+}
+
+label span[id$="V"] {
+  color: var(--accent);
+  font-weight: 600;
+  min-width: 44px;
+  text-align: right;
+}
+
+label.no-value {
+  grid-template-columns: minmax(100px, 1fr) minmax(0, 1fr);
+}
+
+label.no-value.has-checkbox {
+  grid-template-columns: minmax(100px, 1fr) auto;
+}
+
+label.no-value.has-checkbox input[type="checkbox"] {
+  grid-column: 2;
+}
+
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 22px;
+  margin: 0;
+  background: transparent;
+}
+
+input[type="number"],
+input[type="text"],
+select,
+textarea {
+  background: #0f1218;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  padding: 6px 8px;
+  font-family: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+  min-width: 0;
+  max-width: 100%;
+}
+
+textarea {
+  font-family: "Spline Sans Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  width: 100%;
+}
+
+label select,
+label input[type="number"],
+label input[type="text"] {
+  width: 100%;
+  grid-column: 2 / -1;
+}
+
+label input[type="file"] {
+  grid-column: 2 / -1;
+}
+
+label input[type="checkbox"] {
+  grid-column: 3;
+  justify-self: end;
+}
+
+input[type="file"],
+select {
+  width: 100%;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 8px;
+  background: var(--slider-track);
+  border-radius: 999px;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--slider-thumb);
+  border: 1px solid rgba(0, 0, 0, 0.4);
+  box-shadow: 0 0 8px var(--slider-thumb-shadow);
+  margin-top: -4px;
+}
+
+input[type="range"]::-moz-range-track {
+  height: 8px;
+  background: var(--slider-track);
+  border-radius: 999px;
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--slider-thumb);
+  border: 1px solid rgba(0, 0, 0, 0.4);
+  box-shadow: 0 0 8px var(--slider-thumb-shadow);
+}
+
+input[type="range"]::-moz-range-progress {
+  height: 8px;
+  background: var(--slider-thumb);
+  border-radius: 999px;
+}
+
+button {
+  background: #121520;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: border 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
+  max-width: 100%;
+}
+
+button:hover {
+  border-color: rgba(255, 255, 255, 0.25);
+  box-shadow: 0 0 18px rgba(255, 179, 71, 0.15);
+  transform: translateY(-1px);
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
+}
+
+.ghost {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  background: transparent;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  grid-template-columns: none;
+}
+
+.toggle .label-text {
+  flex: 0 0 auto;
+}
+
+.divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.08);
+  margin: 10px 0;
+}
