@@ -180,9 +180,11 @@ import { wgslSource } from './shader.js';
 
   function computePhosphorDecay(dt) {
     const safeDt = Math.max(0, Math.min(dt, 0.1));
-    const base = 0.010 + params.persistence * 0.080;
+    const p = Math.max(0, Math.min(1, params.persistence));
+    if (p <= 0.001) return [0, 0, 0];
+    const base = 0.006 + Math.pow(p, 1.9) * 0.75;
     const tauR = base * 0.95;
-    const tauG = base * 1.15;
+    const tauG = base * 1.18;
     const tauB = base * 0.80;
     const decayR = Math.exp(-safeDt / tauR);
     const decayG = Math.exp(-safeDt / tauG);

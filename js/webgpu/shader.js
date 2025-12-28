@@ -98,6 +98,7 @@ fn fs_beam(in: VSOut) -> @location(0) vec4f {
   let srcSize = v0.xy;
   let dstSize = v0.zw;
   let par = max(v1.xy, vec2f(1e-6));
+  let scanline = v1.z;
   let beamMin = v1.w;
   let beamMax = v2.x;
   let sharp = v2.y;
@@ -110,7 +111,9 @@ fn fs_beam(in: VSOut) -> @location(0) vec4f {
   let cay = v4.y;
   let caEdge = v4.z;
   let energyLock = v4.w;
+  let maskThickness = v5.x;
   let decay = vec3f(v5.y, v5.z, v5.w);
+  let maskRound = v6.x;
   let chromaSpill = v6.y;
   let chromaSigma = v6.z;
   let chromaGain = v6.w;
@@ -122,6 +125,7 @@ fn fs_beam(in: VSOut) -> @location(0) vec4f {
   let syncJitter = v9.y;
   let syncJitterSpeed = v9.z;
   let bypass = v10.z;
+  let maskType = u32(v10.w + 0.5);
   let hdrGain = v11.y;
   let hdrHighlights = v11.z;
 
@@ -148,6 +152,9 @@ fn fs_beam(in: VSOut) -> @location(0) vec4f {
   srcCoord.x += (lineHash - 0.5) * syncJitter * 2.0;
 
   let yCenter = floor(srcCoord.y) + 0.5;
+  let dy = (srcCoord.y - yCenter) * par.y;
+  let sigmaY = 0.5 * par.y;
+  let scanW = gauss(dy, sigmaY, mix(1.0, 2.8, sharp));
   let xCenter = floor(srcCoord.x) + 0.5;
   let cCenter = sampleTex(vec2f(xCenter, yCenter));
   let lum = luma(cCenter);
@@ -298,80 +305,10 @@ fn fs_beam(in: VSOut) -> @location(0) vec4f {
 
   beamColor *= max(0.0, hdrGain);
   let preLum = luma(beamColor);
-  let hdrBoost = pow(max(preLum - 0.6, 0.0) * 2.2, 2.0) * 3.0;
+  let hdrBoost = pow(max(preLum - 0.5, 0.0) * 2.6, 1.7) * 3.8;
   beamColor += vec3f(hdrBoost * max(0.0, hdrHighlights));
 
-  let mixed = prev * decay + beamColor * (vec3f(1.0) - decay);
-  var outColor = max(mixed, vec3f(0.0));
-  if (historyLdr > 0.5) {
-    outColor = hdrEncode(outColor);
-  }
-  return vec4f(outColor, 1.0);
-}
-
-@fragment
-fn fs_final(in: VSOut) -> @location(0) vec4f {
-  let v0 = P.data[0];
-  let v1 = P.data[1];
-  let v2 = P.data[2];
-  let v6 = P.data[6];
-  let v7 = P.data[7];
-  let v8 = P.data[8];
-  let v9 = P.data[9];
-  let v10 = P.data[10];
-  let v11 = P.data[11];
-
-  let srcSize = v0.xy;
-  let dstSize = v0.zw;
-  let par = max(v1.xy, vec2f(1e-6));
-  let scanline = v1.z;
-  let sharp = v2.y;
-  let maskStrength = v2.z;
-  let gamma = v2.w;
-  let maskRound = v6.x;
-  let curvature = v7.z;
-  let vignette = v7.w;
-  let postContrast = v8.x;
-  let postSaturation = v8.y;
-  let time = v9.x;
-  let syncJitter = v9.y;
-  let syncJitterSpeed = v9.z;
-  let rollingBand = v9.w;
-  let rollingBandSpeed = v10.x;
-  let noiseStrength = v10.y;
-  let bypass = v10.z;
-  let maskType = u32(v10.w + 0.5);
-  let debugHDR = v11.x;
-  let historyLdr = v11.w;
-  let maskThickness = P.data[5].x;
-
-  if (bypass > 0.5) {
-    let src = textureSampleLevel(srcTex, srcSamplerLinear, in.uv, 0.0).rgb;
-    let col = pow(saturate3(src), vec3f(1.0 / gamma));
-    return vec4f(col, 1.0);
-  }
-
-  let uvIn = vec2f(in.uv.x, 1.0 - in.uv.y);
-  let warped = warpUv(uvIn, dstSize, curvature, time, syncJitter, syncJitterSpeed);
-  let uvw = warped.xy;
-  let dist = warped.z;
-  if (uvw.x < 0.0 || uvw.x > 1.0 || uvw.y < 0.0 || uvw.y > 1.0) {
-    let bezel = vec3f(0.015, 0.015, 0.02);
-    return vec4f(bezel, 1.0);
-  }
-
-  let histEncoded = sampleHistory(uvIn);
-  var col = histEncoded;
-  if (historyLdr > 0.5) {
-    col = hdrDecode(histEncoded);
-  }
-
-  let srcCoord = uvw * srcSize;
-  let yCenter = floor(srcCoord.y) + 0.5;
-  let dy = (srcCoord.y - yCenter) * par.y;
-  let sigmaY = 0.5 * par.y;
-  let scanW = gauss(dy, sigmaY, mix(1.0, 2.8, sharp));
-  col *= mix(1.0, scanW, 1.0 - scanline);
+  beamColor *= mix(1.0, scanW, 1.0 - scanline);
 
   if (maskStrength > 0.0) {
     let cell = fract(srcCoord);
@@ -396,7 +333,62 @@ fn fs_final(in: VSOut) -> @location(0) vec4f {
       let vert = exp(-pow(dy2 * (0.6 + roundness * 0.4), 2.0));
       mask = vec3f(stripe * mix(1.0, vert, maskRound));
     }
-    col *= mix(vec3f(1.0), mask, maskStrength);
+    beamColor *= mix(vec3f(1.0), mask, maskStrength);
+  }
+
+  let mixed = prev * decay + beamColor * (vec3f(1.0) - decay);
+  var outColor = max(mixed, vec3f(0.0));
+  if (historyLdr > 0.5) {
+    outColor = hdrEncode(outColor);
+  }
+  return vec4f(outColor, 1.0);
+}
+
+@fragment
+fn fs_final(in: VSOut) -> @location(0) vec4f {
+  let v0 = P.data[0];
+  let v2 = P.data[2];
+  let v7 = P.data[7];
+  let v8 = P.data[8];
+  let v9 = P.data[9];
+  let v10 = P.data[10];
+  let v11 = P.data[11];
+
+  let dstSize = v0.zw;
+  let gamma = v2.w;
+  let curvature = v7.z;
+  let vignette = v7.w;
+  let postContrast = v8.x;
+  let postSaturation = v8.y;
+  let time = v9.x;
+  let syncJitter = v9.y;
+  let syncJitterSpeed = v9.z;
+  let rollingBand = v9.w;
+  let rollingBandSpeed = v10.x;
+  let noiseStrength = v10.y;
+  let bypass = v10.z;
+  let debugHDR = v11.x;
+  let historyLdr = v11.w;
+
+  if (bypass > 0.5) {
+    let src = textureSampleLevel(srcTex, srcSamplerLinear, in.uv, 0.0).rgb;
+    let col = pow(saturate3(src), vec3f(1.0 / gamma));
+    return vec4f(col, 1.0);
+  }
+
+  let uvIn = vec2f(in.uv.x, 1.0 - in.uv.y);
+  let warped = warpUv(uvIn, dstSize, curvature, time, syncJitter, syncJitterSpeed);
+  let uvw = warped.xy;
+  let dist = warped.z;
+  if (uvw.x < 0.0 || uvw.x > 1.0 || uvw.y < 0.0 || uvw.y > 1.0) {
+    let bezel = vec3f(0.015, 0.015, 0.02);
+    return vec4f(bezel, 1.0);
+  }
+
+  let histEncoded = sampleHistory(uvIn);
+  var col = histEncoded;
+  if (historyLdr > 0.5) {
+    col = hdrDecode(histEncoded);
   }
 
   let vig = 1.0 - vignette * smoothstep(0.6, 1.0, dist);
