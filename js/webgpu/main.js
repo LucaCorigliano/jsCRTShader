@@ -19,7 +19,7 @@ import { wgslSource } from './shader.js';
   ];
 
   const sliderSettingIds = [
-    'scanline','beamMin','beamMax','sharp','caX','caY','caEdge','energyLock',
+    'scanline','persistence','beamMin','beamMax','sharp','caX','caY','caEdge','energyLock',
     'bloom','bloomSigma','halation','halationSigma','chromaSpill','chromaSigma','chromaGain',
     'blackSpill','blackSigma','maskStr','maskContrast',
     'maskRound','gamma','hdrGain','hdrHighlights','curvature','vignette','postContrast','postSaturation','postBrightness',
@@ -32,11 +32,19 @@ import { wgslSource } from './shader.js';
   let uniformBuffer = null;
   let sampler = null;
   let samplerLinear = null;
-  let pipeline = null;
+  let beamPipeline = null;
+  let finalPipeline = null;
   let bindGroupLayout = null;
   let pipelineLayout = null;
-  let bindGroup = null;
+  let bindGroups = [];
   let sourceTexture = null;
+  let historyTextures = [];
+  let historyViews = [];
+  let historyIndex = 0;
+  let historyTexW = 0;
+  let historyTexH = 0;
+  let historyValid = false;
+  let lastFrameTime = 0;
   let sourceTexW = 0;
   let sourceTexH = 0;
   let configuredFormat = null;
@@ -84,6 +92,7 @@ import { wgslSource } from './shader.js';
 
   const params = {
     scanline: 0.36,
+    persistence: 0.55,
     beamMin: 0.92,
     beamMax: 1.70,
     sharp: 1.15,
@@ -167,7 +176,20 @@ import { wgslSource } from './shader.js';
     return false;
   }
 
-  function updateUniformBuffer() {
+  function computePhosphorDecay(dt) {
+    const safeDt = Math.max(0, Math.min(dt, 0.1));
+    const base = 0.010 + params.persistence * 0.080;
+    const tauR = base * 0.95;
+    const tauG = base * 1.15;
+    const tauB = base * 0.80;
+    const decayR = Math.exp(-safeDt / tauR);
+    const decayG = Math.exp(-safeDt / tauG);
+    const decayB = Math.exp(-safeDt / tauB);
+    return [decayR, decayG, decayB];
+  }
+
+  function updateUniformBuffer(deltaTime, resetHistory) {
+    const [decayR, decayG, decayB] = resetHistory ? [0, 0, 0] : computePhosphorDecay(deltaTime || 0);
     uniformData[0] = srcW; // v0
     uniformData[1] = srcH;
     uniformData[2] = canvas.width;
@@ -194,9 +216,9 @@ import { wgslSource } from './shader.js';
     uniformData[19] = params.energyLock;
 
     uniformData[20] = params.maskContrast; // v5
-    uniformData[21] = 0.0;
-    uniformData[22] = 0.0;
-    uniformData[23] = 0.0;
+    uniformData[21] = decayR;
+    uniformData[22] = decayG;
+    uniformData[23] = decayB;
 
     uniformData[24] = params.maskRound; // v6
     uniformData[25] = params.chromaSpill;
@@ -234,6 +256,7 @@ import { wgslSource } from './shader.js';
   function setSrcSize(w, h) {
     srcW = w;
     srcH = h;
+    historyValid = false;
     const wEl = document.getElementById('srcW');
     const hEl = document.getElementById('srcH');
     if (wEl) wEl.value = w;
@@ -251,20 +274,46 @@ import { wgslSource } from './shader.js';
     });
     sourceTexW = w;
     sourceTexH = h;
-    updateBindGroup();
+    updateBindGroups();
   }
 
-  function updateBindGroup() {
+  function ensureHistoryTextures(w, h) {
+    if (!device) return;
+    if (historyTextures[0] && historyTexW === w && historyTexH === h) return;
+    historyTextures.forEach((tex) => tex && tex.destroy && tex.destroy());
+    historyTextures = [];
+    historyViews = [];
+    for (let i = 0; i < 2; i += 1) {
+      const tex = device.createTexture({
+        size: { width: w, height: h },
+        format: 'rgba16float',
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
+      });
+      historyTextures.push(tex);
+      historyViews.push(tex.createView());
+    }
+    historyTexW = w;
+    historyTexH = h;
+    historyIndex = 0;
+    historyValid = false;
+    lastFrameTime = 0;
+    updateBindGroups();
+  }
+
+  function updateBindGroups() {
     if (!device || !sourceTexture || !sampler || !samplerLinear || !bindGroupLayout) return;
-    bindGroup = device.createBindGroup({
+    if (!historyViews[0] || !historyViews[1]) return;
+    const sourceView = sourceTexture.createView();
+    bindGroups = historyViews.map((view) => device.createBindGroup({
       layout: bindGroupLayout,
       entries: [
         { binding: 0, resource: { buffer: uniformBuffer } },
         { binding: 1, resource: sampler },
         { binding: 2, resource: samplerLinear },
-        { binding: 3, resource: sourceTexture.createView() },
+        { binding: 3, resource: sourceView },
+        { binding: 4, resource: view },
       ],
-    });
+    }));
   }
 
   function copySourceToTexture() {
@@ -1251,19 +1300,22 @@ import { wgslSource } from './shader.js';
         { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
         { binding: 2, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
         { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: {} },
       ],
     });
     pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] });
 
-    configureContext();
-    createPipeline();
-    ensureSourceTexture(srcW, srcH);
-    updateBindGroup();
     resize();
+    configureContext();
+    createPipelines();
+    ensureSourceTexture(srcW, srcH);
+    ensureHistoryTextures(canvas.width, canvas.height);
+    updateBindGroups();
     requestAnimationFrame(frame);
   }
 
   function configureContext() {
+    const prevFormat = configuredFormat;
     try {
       configuredFormat = 'rgba16float';
       context.configure({
@@ -1281,10 +1333,13 @@ import { wgslSource } from './shader.js';
     }
     const hdrText = usedExtendedToneMapping ? 'HDR: extended tonemap (rgba16float)' : `HDR: fallback (${configuredFormat})`;
     setStatus(`${hdrText} · dpr=${(window.devicePixelRatio || 1).toFixed(2)}`);
+    if (prevFormat && prevFormat !== configuredFormat && pipelineLayout) {
+      createPipelines();
+    }
     needsReconfigure = false;
   }
 
-  function createPipeline() {
+  function createPipelines() {
     const shaderModule = device.createShaderModule({ code: wgslSource });
     if (shaderModule.compilationInfo) {
       shaderModule.compilationInfo().then((info) => {
@@ -1302,10 +1357,16 @@ import { wgslSource } from './shader.js';
       });
     }
     try {
-      pipeline = device.createRenderPipeline({
+      beamPipeline = device.createRenderPipeline({
         layout: pipelineLayout,
         vertex: { module: shaderModule, entryPoint: 'vs' },
-        fragment: { module: shaderModule, entryPoint: 'fs', targets: [{ format: configuredFormat }] },
+        fragment: { module: shaderModule, entryPoint: 'fs_beam', targets: [{ format: 'rgba16float' }] },
+        primitive: { topology: 'triangle-list' },
+      });
+      finalPipeline = device.createRenderPipeline({
+        layout: pipelineLayout,
+        vertex: { module: shaderModule, entryPoint: 'vs' },
+        fragment: { module: shaderModule, entryPoint: 'fs_final', targets: [{ format: configuredFormat }] },
         primitive: { topology: 'triangle-list' },
       });
     } catch (err) {
@@ -1315,17 +1376,40 @@ import { wgslSource } from './shader.js';
   }
 
   function frame(now) {
-    if (!device || !context || !pipeline || !bindGroup) return;
-    if (resizeCanvasToDisplaySize() || needsReconfigure) {
+    if (!device || !context || !beamPipeline || !finalPipeline || bindGroups.length < 2) return;
+    const resized = resizeCanvasToDisplaySize();
+    if (resized || needsReconfigure) {
       configureContext();
+      ensureHistoryTextures(canvas.width, canvas.height);
     }
+    if (!historyViews[0] || !historyViews[1]) return;
+    const dt = lastFrameTime ? Math.min((now - lastFrameTime) * 0.001, 0.1) : (1 / 60);
+    lastFrameTime = now;
     params.time = (now * 0.001);
-    updateUniformBuffer();
+    const resetHistory = !historyValid;
+    updateUniformBuffer(dt, resetHistory);
+    historyValid = true;
     copySourceToTexture();
 
-    const view = context.getCurrentTexture().createView();
+    const prevIndex = historyIndex;
+    const nextIndex = 1 - historyIndex;
+
     const encoder = device.createCommandEncoder();
-    const pass = encoder.beginRenderPass({
+    const beamPass = encoder.beginRenderPass({
+      colorAttachments: [{
+        view: historyViews[nextIndex],
+        loadOp: 'clear',
+        storeOp: 'store',
+        clearValue: { r: 0, g: 0, b: 0, a: 1 },
+      }],
+    });
+    beamPass.setPipeline(beamPipeline);
+    beamPass.setBindGroup(0, bindGroups[prevIndex]);
+    beamPass.draw(3);
+    beamPass.end();
+
+    const view = context.getCurrentTexture().createView();
+    const finalPass = encoder.beginRenderPass({
       colorAttachments: [{
         view,
         loadOp: 'clear',
@@ -1333,11 +1417,13 @@ import { wgslSource } from './shader.js';
         clearValue: { r: 0, g: 0, b: 0, a: 1 },
       }],
     });
-    pass.setPipeline(pipeline);
-    pass.setBindGroup(0, bindGroup);
-    pass.draw(3);
-    pass.end();
+    finalPass.setPipeline(finalPipeline);
+    finalPass.setBindGroup(0, bindGroups[nextIndex]);
+    finalPass.draw(3);
+    finalPass.end();
+
     device.queue.submit([encoder.finish()]);
+    historyIndex = nextIndex;
     requestAnimationFrame(frame);
   }
 
@@ -1456,6 +1542,7 @@ import { wgslSource } from './shader.js';
 
     // Sliders to params
     bindRange('scanline', (v) => (params.scanline = v));
+    bindRange('persistence', (v) => (params.persistence = v));
     bindRange('beamMin', (v) => (params.beamMin = v));
     bindRange('beamMax', (v) => (params.beamMax = v));
     bindRange('sharp', (v) => (params.sharp = v));

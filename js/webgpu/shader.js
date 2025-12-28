@@ -6,6 +6,7 @@ struct Params {
 @group(0) @binding(1) var srcSampler : sampler;
 @group(0) @binding(2) var srcSamplerLinear : sampler;
 @group(0) @binding(3) var srcTex : texture_2d<f32>;
+@group(0) @binding(4) var histTex : texture_2d<f32>;
 
 struct VSOut {
   @builtin(position) pos : vec4f,
@@ -35,7 +36,6 @@ fn tri(x: f32) -> f32 {
   let f = fract(x);
   return 1.0 - abs(f * 2.0 - 1.0);
 }
-fn fmod(x: f32, y: f32) -> f32 { return x - y * floor(x / y); }
 fn luma(c: vec3f) -> f32 { return dot(c, vec3f(0.2126, 0.7152, 0.0722)); }
 fn gauss(x: f32, sigma: f32, k: f32) -> f32 {
   let n = x / max(1e-6, sigma);
@@ -54,8 +54,28 @@ fn sampleTexLinear(src: vec2f) -> vec3f {
   return textureSampleLevel(srcTex, srcSamplerLinear, (src + vec2f(0.5)) / sz, 0.0).rgb;
 }
 
+fn warpUv(uvIn: vec2f, dstSize: vec2f, curvature: f32, time: f32, syncJitter: f32, syncJitterSpeed: f32) -> vec4f {
+  var uv = uvIn * 2.0 - vec2f(1.0);
+  let jitterPhase = (uvIn.y + time * max(0.05, syncJitterSpeed + 0.1)) * 120.0;
+  let jitter = syncJitter * 0.015 * sin(jitterPhase);
+  let wobble = syncJitter * 0.010 * sin(uvIn.y * 40.0 + time * 8.0);
+  uv.x += jitter;
+  uv.y += wobble;
+
+  let aspect = dstSize.x / max(dstSize.y, 1.0);
+  uv.x *= aspect;
+  let zoom = 1.0 + 0.6 * curvature;
+  uv /= zoom;
+  let r2 = dot(uv, uv);
+  uv *= (1.0 + curvature * r2);
+  uv.x /= aspect;
+  let uvw = uv * 0.5 + vec2f(0.5);
+  let dist = length(uv);
+  return vec4f(uvw, dist, aspect);
+}
+
 @fragment
-fn fs(in: VSOut) -> @location(0) vec4f {
+fn fs_beam(in: VSOut) -> @location(0) vec4f {
   let v0 = P.data[0];
   let v1 = P.data[1];
   let v2 = P.data[2];
@@ -72,12 +92,10 @@ fn fs(in: VSOut) -> @location(0) vec4f {
   let srcSize = v0.xy;
   let dstSize = v0.zw;
   let par = max(v1.xy, vec2f(1e-6));
-  let scanline = v1.z;
   let beamMin = v1.w;
   let beamMax = v2.x;
   let sharp = v2.y;
   let maskStrength = v2.z;
-  let gamma = v2.w;
   let bloom = v3.x;
   let bloomSigma = v3.y;
   let halation = v3.z;
@@ -86,70 +104,44 @@ fn fs(in: VSOut) -> @location(0) vec4f {
   let cay = v4.y;
   let caEdge = v4.z;
   let energyLock = v4.w;
-  let maskThickness = v5.x;
-  let maskRound = v6.x;
+  let decay = vec3f(v5.y, v5.z, v5.w);
   let chromaSpill = v6.y;
   let chromaSigma = v6.z;
   let chromaGain = v6.w;
   let blackSpill = v7.x;
   let blackSigma = v7.y;
   let curvature = v7.z;
-  let vignette = v7.w;
-  let postContrast = v8.x;
-  let postSaturation = v8.y;
-  let postBrightness = v8.z;
   let spillBias = v8.w;
   let time = v9.x;
   let syncJitter = v9.y;
   let syncJitterSpeed = v9.z;
-  let rollingBand = v9.w;
-  let rollingBandSpeed = v10.x;
-  let noiseStrength = v10.y;
   let bypass = v10.z;
-  let maskType = u32(v10.w + 0.5);
-  let debugHDR = v11.x;
   let hdrGain = v11.y;
   let hdrHighlights = v11.z;
 
+  let prev = textureSampleLevel(histTex, srcSamplerLinear, in.uv, 0.0).rgb;
   if (bypass > 0.5) {
-    let src = textureSampleLevel(srcTex, srcSampler, in.uv, 0.0).rgb;
-    let col = pow(saturate3(src), vec3f(1.0 / gamma));
-    return vec4f(col, 1.0);
+    return vec4f(prev, 1.0);
   }
 
-  var uv = in.uv * 2.0 - vec2f(1.0);
-  let jitterPhase = (in.uv.y + time * max(0.05, syncJitterSpeed + 0.1)) * 120.0;
-  let jitter = syncJitter * 0.015 * sin(jitterPhase);
-  let wobble = syncJitter * 0.010 * sin(in.uv.y * 40.0 + time * 8.0);
-  uv.x += jitter;
-  uv.y += wobble;
+  let warped = warpUv(in.uv, dstSize, curvature, time, syncJitter, syncJitterSpeed);
+  let uvw = warped.xy;
+  if (uvw.x < 0.0 || uvw.x > 1.0 || uvw.y < 0.0 || uvw.y > 1.0) {
+    let faded = prev * decay;
+    return vec4f(faded, 1.0);
+  }
 
-  let aspect = dstSize.x / max(dstSize.y, 1.0);
-  uv.x *= aspect;
-  let zoom = 1.0 + 0.6 * curvature;
-  uv /= zoom;
-  let r2 = dot(uv, uv);
-  uv *= (1.0 + curvature * r2);
-  uv.x /= aspect;
-  let uvw = uv * 0.5 + vec2f(0.5);
-  let dist = length(uv);
-  let vig = 1.0 - vignette * smoothstep(0.6, 1.0, dist);
-
-  let srcCoordMask = uvw * srcSize;
-  var srcCoord = uvw * srcSize;
+  let srcCoord = uvw * srcSize;
   let lineHash = hash21(vec2f(floor(uvw.y * dstSize.y), floor(time * 120.0)));
   srcCoord.x += (lineHash - 0.5) * syncJitter * 2.0;
 
   let yCenter = floor(srcCoord.y) + 0.5;
-  let dy = (srcCoord.y - yCenter) * par.y;
-  let sigmaY = 0.5 * par.y;
-  let scanW = gauss(dy, sigmaY, mix(1.0, 2.8, sharp));
-
   let xCenter = floor(srcCoord.x) + 0.5;
   let cCenter = sampleTex(vec2f(xCenter, yCenter));
   let lum = luma(cCenter);
   let beamSigmaBase = mix(beamMin, beamMax, saturate(lum));
 
+  let uv = vec2f((uvw.x * 2.0 - 1.0), (uvw.y * 2.0 - 1.0));
   let caEdgeStrength = pow(clamp(length(uv), 0.0, 1.0), 1.15) * caEdge;
   let halfWidth = i32(clamp(ceil(3.0 * beamSigmaBase * par.x), 3.0, 8.0));
   var accum = vec3f(0.0);
@@ -207,7 +199,7 @@ fn fs(in: VSOut) -> @location(0) vec4f {
         let offset = vec2f(f32(ox) * par.x, f32(oy) * par.y);
         let dist2 = dot(offset, offset);
         let w = exp(-dist2 / (2.0 * sigmaPx * sigmaPx + 1e-4));
-      let s = sampleTex(vec2f(xCenter + f32(ox), yCenter + f32(oy)));
+        let s = sampleTex(vec2f(xCenter + f32(ox), yCenter + f32(oy)));
         bloomAcc += s * w;
         bloomW += w;
       }
@@ -270,53 +262,6 @@ fn fs(in: VSOut) -> @location(0) vec4f {
     beamColor += halation * halo;
   }
 
-  beamColor *= mix(1.0, scanW, 1.0 - scanline) * vig;
-
-  if (rollingBand > 0.0) {
-    let speed = rollingBandSpeed;
-    let center = fract(time * speed);
-    let bandDist = abs(fract(uvw.y - center + 0.5) - 0.5);
-    let bandWidth = mix(0.03, 0.16, clamp(rollingBand, 0.0, 1.0));
-    let bandMask = exp(-bandDist * bandDist / (bandWidth * bandWidth + 1e-4));
-    let bandPulse = 0.5 + 0.5 * sin((uvw.x * dstSize.x * 0.5) + time * 12.0);
-    beamColor = mix(beamColor, beamColor * (0.7 + 0.3 * bandPulse), bandMask * rollingBand);
-  }
-
-  if (noiseStrength > 0.0) {
-    let noiseCoord = vec2f(uvw.x * dstSize.x, uvw.y * dstSize.y);
-    let staticGrain = hash21(noiseCoord + vec2f(time * 60.0, time * 13.0)) - 0.5;
-    let lineNoise = hash21(vec2f(0.0, floor(noiseCoord.y + time * 12.0))) - 0.5;
-    let grain = staticGrain * 0.7 + lineNoise * 0.3;
-    beamColor += beamColor * grain * noiseStrength;
-    beamColor = clamp(beamColor, vec3f(0.0), vec3f(4.0));
-  }
-
-  var mask = vec3f(1.0);
-  if (maskStrength > 0.0) {
-    let cell = fract(srcCoordMask);
-    let sub = i32(floor(cell.x * 3.0));
-    let centerX = (f32(sub) + 0.5) / 3.0;
-    let dx = abs(cell.x - centerX) / (1.0 / 6.0);
-    let dy = abs(cell.y - 0.5) / 0.5;
-    let thickness = clamp(maskThickness, 0.2, 2.0);
-    let width = mix(0.4, 1.15, clamp(thickness * 0.5, 0.0, 1.0));
-    let roundness = mix(0.6, 2.0, clamp(maskRound, 0.0, 1.0));
-    if (maskType == 0u) {
-      let spot = exp(-pow(dx / width, 2.0)) * exp(-pow(dy * roundness, 2.0));
-      let subMask = select(
-        select(vec3f(1.0, 0.35, 0.35), vec3f(0.35, 1.0, 0.35), sub == 1),
-        vec3f(0.35, 0.35, 1.0),
-        sub == 2
-      );
-      mask = subMask * spot;
-    } else {
-      let stripe = exp(-pow(dx / width, 2.0));
-      let vert = exp(-pow(dy * (0.6 + roundness * 0.4), 2.0));
-      mask = vec3f(stripe * mix(1.0, vert, maskRound));
-    }
-    beamColor *= mix(vec3f(1.0), mask, maskStrength);
-  }
-
   if (blackSpill > 0.0) {
     let dSigma = beamSigmaBase * blackSigma * par.x;
     let halfD = i32(clamp(ceil(3.0 * dSigma), 4.0, 14.0));
@@ -339,29 +284,137 @@ fn fs(in: VSOut) -> @location(0) vec4f {
     beamColor *= (1.0 - strength);
   }
 
-  // Add HDR headroom on bright luma to demonstrate >1.0 output on HDR paths.
   beamColor *= max(0.0, hdrGain);
-  let prePostLum = luma(beamColor);
-  let hdrBoost = pow(max(prePostLum - 0.62, 0.0) * 2.4, 2.2) * 3.5;
-  beamColor += vec3f(hdrBoost * max(0.0, hdrHighlights) * (1.0 + debugHDR * 2.0));
+  let preLum = luma(beamColor);
+  let hdrBoost = pow(max(preLum - 0.6, 0.0) * 2.2, 2.0) * 3.0;
+  beamColor += vec3f(hdrBoost * max(0.0, hdrHighlights));
 
-  beamColor = max(beamColor + vec3f(postBrightness), vec3f(0.0));
-  beamColor = (beamColor - vec3f(0.5)) * postContrast + vec3f(0.5);
-  beamColor = max(beamColor, vec3f(0.0));
-  let Y = luma(beamColor);
-  let C = beamColor - vec3f(Y);
-  beamColor = vec3f(Y) + C * postSaturation;
+  let mixed = prev * decay + beamColor * (vec3f(1.0) - decay);
+  return vec4f(max(mixed, vec3f(0.0)), 1.0);
+}
 
-  // Optional HDR debug strip: top 5% shows 1.0 vs 4.0 white to validate HDR path.
+@fragment
+fn fs_final(in: VSOut) -> @location(0) vec4f {
+  let v0 = P.data[0];
+  let v1 = P.data[1];
+  let v2 = P.data[2];
+  let v6 = P.data[6];
+  let v7 = P.data[7];
+  let v8 = P.data[8];
+  let v9 = P.data[9];
+  let v10 = P.data[10];
+  let v11 = P.data[11];
+
+  let srcSize = v0.xy;
+  let dstSize = v0.zw;
+  let par = max(v1.xy, vec2f(1e-6));
+  let scanline = v1.z;
+  let sharp = v2.y;
+  let maskStrength = v2.z;
+  let gamma = v2.w;
+  let maskRound = v6.x;
+  let curvature = v7.z;
+  let vignette = v7.w;
+  let postContrast = v8.x;
+  let postSaturation = v8.y;
+  let postBrightness = v8.z;
+  let time = v9.x;
+  let syncJitter = v9.y;
+  let syncJitterSpeed = v9.z;
+  let rollingBand = v9.w;
+  let rollingBandSpeed = v10.x;
+  let noiseStrength = v10.y;
+  let bypass = v10.z;
+  let maskType = u32(v10.w + 0.5);
+  let debugHDR = v11.x;
+  let maskThickness = P.data[5].x;
+
+  if (bypass > 0.5) {
+    let src = textureSampleLevel(srcTex, srcSamplerLinear, in.uv, 0.0).rgb;
+    let col = pow(saturate3(src), vec3f(1.0 / gamma));
+    return vec4f(col, 1.0);
+  }
+
+  let warped = warpUv(in.uv, dstSize, curvature, time, syncJitter, syncJitterSpeed);
+  let uvw = warped.xy;
+  let dist = warped.z;
+  if (uvw.x < 0.0 || uvw.x > 1.0 || uvw.y < 0.0 || uvw.y > 1.0) {
+    let bezel = vec3f(0.015, 0.015, 0.02);
+    return vec4f(bezel, 1.0);
+  }
+
+  var col = textureSampleLevel(histTex, srcSamplerLinear, in.uv, 0.0).rgb;
+
+  let srcCoord = uvw * srcSize;
+  let yCenter = floor(srcCoord.y) + 0.5;
+  let dy = (srcCoord.y - yCenter) * par.y;
+  let sigmaY = 0.5 * par.y;
+  let scanW = gauss(dy, sigmaY, mix(1.0, 2.8, sharp));
+  col *= mix(1.0, scanW, 1.0 - scanline);
+
+  if (maskStrength > 0.0) {
+    let cell = fract(srcCoord);
+    let sub = i32(floor(cell.x * 3.0));
+    let centerX = (f32(sub) + 0.5) / 3.0;
+    let dx = abs(cell.x - centerX) / (1.0 / 6.0);
+    let dy2 = abs(cell.y - 0.5) / 0.5;
+    let thickness = clamp(maskThickness, 0.2, 2.0);
+    let width = mix(0.4, 1.15, clamp(thickness * 0.5, 0.0, 1.0));
+    let roundness = mix(0.6, 2.0, clamp(maskRound, 0.0, 1.0));
+    var mask = vec3f(1.0);
+    if (maskType == 0u) {
+      let spot = exp(-pow(dx / width, 2.0)) * exp(-pow(dy2 * roundness, 2.0));
+      let subMask = select(
+        select(vec3f(1.0, 0.35, 0.35), vec3f(0.35, 1.0, 0.35), sub == 1),
+        vec3f(0.35, 0.35, 1.0),
+        sub == 2
+      );
+      mask = subMask * spot;
+    } else {
+      let stripe = exp(-pow(dx / width, 2.0));
+      let vert = exp(-pow(dy2 * (0.6 + roundness * 0.4), 2.0));
+      mask = vec3f(stripe * mix(1.0, vert, maskRound));
+    }
+    col *= mix(vec3f(1.0), mask, maskStrength);
+  }
+
+  let vig = 1.0 - vignette * smoothstep(0.6, 1.0, dist);
+  col *= vig;
+
+  if (rollingBand > 0.0) {
+    let speed = rollingBandSpeed;
+    let center = fract(time * speed);
+    let bandDist = abs(fract(uvw.y - center + 0.5) - 0.5);
+    let bandWidth = mix(0.03, 0.16, clamp(rollingBand, 0.0, 1.0));
+    let bandMask = exp(-bandDist * bandDist / (bandWidth * bandWidth + 1e-4));
+    let bandPulse = 0.5 + 0.5 * sin((uvw.x * dstSize.x * 0.5) + time * 12.0);
+    col = mix(col, col * (0.7 + 0.3 * bandPulse), bandMask * rollingBand);
+  }
+
+  if (noiseStrength > 0.0) {
+    let noiseCoord = vec2f(uvw.x * dstSize.x, uvw.y * dstSize.y);
+    let staticGrain = hash21(noiseCoord + vec2f(time * 60.0, time * 13.0)) - 0.5;
+    let lineNoise = hash21(vec2f(0.0, floor(noiseCoord.y + time * 12.0))) - 0.5;
+    let grain = staticGrain * 0.7 + lineNoise * 0.3;
+    col += col * grain * noiseStrength;
+    col = clamp(col, vec3f(0.0), vec3f(6.0));
+  }
+
+  col = max(col + vec3f(postBrightness), vec3f(0.0));
+  col = (col - vec3f(0.5)) * postContrast + vec3f(0.5);
+  col = max(col, vec3f(0.0));
+  let Y = luma(col);
+  let C = col - vec3f(Y);
+  col = vec3f(Y) + C * postSaturation;
+
   if (debugHDR > 0.5) {
     if (uvw.y < 0.05) {
       let bar = select(vec3f(1.0), vec3f(4.0), uvw.x > 0.5);
-      beamColor = mix(beamColor, bar, 0.8);
+      col = mix(col, bar, 0.8);
     }
   }
 
-  // Output with gamma applied; allow highlights >1.0 for HDR path.
-  beamColor = pow(max(beamColor, vec3f(0.0)), vec3f(1.0 / gamma));
-  return vec4f(beamColor, 1.0);
+  col = pow(max(col, vec3f(0.0)), vec3f(1.0 / gamma));
+  return vec4f(col, 1.0);
 }
-`
+`;
