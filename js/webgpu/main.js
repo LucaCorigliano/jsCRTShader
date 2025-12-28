@@ -44,6 +44,8 @@ import { wgslSource } from './shader.js';
   let historyTexW = 0;
   let historyTexH = 0;
   let historyValid = false;
+  let historyFormat = 'rgba16float';
+  let historySampleType = 'unfilterable-float';
   let lastFrameTime = 0;
   let sourceTexW = 0;
   let sourceTexH = 0;
@@ -82,6 +84,7 @@ import { wgslSource } from './shader.js';
   let autosaveEnabled = true;
   let autosaveTimer = null;
   let defaultSettings = null;
+  const gpuDebug = new URLSearchParams(window.location.search).has('gpuDebug');
 
   try {
     const storedAutosave = localStorage.getItem(AUTOSAVE_KEY);
@@ -286,7 +289,7 @@ import { wgslSource } from './shader.js';
     for (let i = 0; i < 2; i += 1) {
       const tex = device.createTexture({
         size: { width: w, height: h },
-        format: 'rgba16float',
+        format: historyFormat,
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
       });
       historyTextures.push(tex);
@@ -1267,7 +1270,11 @@ import { wgslSource } from './shader.js';
       return;
     }
     setStatus('Requesting device…');
-    device = await adapter.requestDevice();
+    const supports16f = adapter.features.has('texture-format-16-bit-float');
+    const requiredFeatures = supports16f ? ['texture-format-16-bit-float'] : [];
+    device = await adapter.requestDevice({ requiredFeatures });
+    historyFormat = supports16f ? 'rgba16float' : 'rgba8unorm';
+    historySampleType = supports16f ? 'unfilterable-float' : 'float';
     device.addEventListener('uncapturederror', (event) => {
       console.error('WebGPU uncaptured error', event.error);
       setStatus(`WebGPU error: ${event.error?.message || 'Unknown'}`, 'bad');
@@ -1300,7 +1307,7 @@ import { wgslSource } from './shader.js';
         { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
         { binding: 2, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
         { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: {} },
-        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
+        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: historySampleType } },
       ],
     });
     pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] });
@@ -1332,7 +1339,8 @@ import { wgslSource } from './shader.js';
       context.configure({ device, format: configuredFormat, alphaMode: 'opaque' });
     }
     const hdrText = usedExtendedToneMapping ? 'HDR: extended tonemap (rgba16float)' : `HDR: fallback (${configuredFormat})`;
-    setStatus(`${hdrText} · dpr=${(window.devicePixelRatio || 1).toFixed(2)}`);
+    const histText = historyFormat === 'rgba16float' ? 'history=rgba16f' : `history=${historyFormat}`;
+    setStatus(`${hdrText} · ${histText} · dpr=${(window.devicePixelRatio || 1).toFixed(2)}`);
     if (prevFormat && prevFormat !== configuredFormat && pipelineLayout) {
       createPipelines();
     }
@@ -1360,7 +1368,7 @@ import { wgslSource } from './shader.js';
       beamPipeline = device.createRenderPipeline({
         layout: pipelineLayout,
         vertex: { module: shaderModule, entryPoint: 'vs' },
-        fragment: { module: shaderModule, entryPoint: 'fs_beam', targets: [{ format: 'rgba16float' }] },
+        fragment: { module: shaderModule, entryPoint: 'fs_beam', targets: [{ format: historyFormat }] },
         primitive: { topology: 'triangle-list' },
       });
       finalPipeline = device.createRenderPipeline({
@@ -1394,6 +1402,7 @@ import { wgslSource } from './shader.js';
     const prevIndex = historyIndex;
     const nextIndex = 1 - historyIndex;
 
+    if (gpuDebug) device.pushErrorScope('validation');
     const encoder = device.createCommandEncoder();
     const beamPass = encoder.beginRenderPass({
       colorAttachments: [{
@@ -1423,6 +1432,13 @@ import { wgslSource } from './shader.js';
     finalPass.end();
 
     device.queue.submit([encoder.finish()]);
+    if (gpuDebug) {
+      device.popErrorScope().then((err) => {
+        if (!err) return;
+        console.error('WebGPU validation error', err);
+        setStatus(`WebGPU validation error: ${err.message || 'Unknown'}`, 'bad');
+      });
+    }
     historyIndex = nextIndex;
     requestAnimationFrame(frame);
   }
