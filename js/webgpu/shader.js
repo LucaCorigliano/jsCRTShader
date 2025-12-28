@@ -54,6 +54,13 @@ fn sampleTexLinear(src: vec2f) -> vec3f {
   return textureSampleLevel(srcTex, srcSamplerLinear, (src + vec2f(0.5)) / sz, 0.0).rgb;
 }
 
+fn loadHistory(uv: vec2f, dstSize: vec2f) -> vec3f {
+  let size = vec2i(max(1, i32(dstSize.x)), max(1, i32(dstSize.y)));
+  let coord = vec2i(i32(uv.x * f32(size.x)), i32(uv.y * f32(size.y)));
+  let clamped = clamp(coord, vec2i(0), size - vec2i(1));
+  return textureLoad(histTex, clamped, 0).rgb;
+}
+
 fn warpUv(uvIn: vec2f, dstSize: vec2f, curvature: f32, time: f32, syncJitter: f32, syncJitterSpeed: f32) -> vec4f {
   var uv = uvIn * 2.0 - vec2f(1.0);
   let jitterPhase = (uvIn.y + time * max(0.05, syncJitterSpeed + 0.1)) * 120.0;
@@ -119,7 +126,7 @@ fn fs_beam(in: VSOut) -> @location(0) vec4f {
   let hdrGain = v11.y;
   let hdrHighlights = v11.z;
 
-  let prev = textureSampleLevel(histTex, srcSamplerLinear, in.uv, 0.0).rgb;
+  let prev = loadHistory(in.uv, dstSize);
   if (bypass > 0.5) {
     return vec4f(prev, 1.0);
   }
@@ -343,7 +350,7 @@ fn fs_final(in: VSOut) -> @location(0) vec4f {
     return vec4f(bezel, 1.0);
   }
 
-  var col = textureSampleLevel(histTex, srcSamplerLinear, in.uv, 0.0).rgb;
+  var col = loadHistory(in.uv, dstSize);
 
   let srcCoord = uvw * srcSize;
   let yCenter = floor(srcCoord.y) + 0.5;

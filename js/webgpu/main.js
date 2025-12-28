@@ -1300,7 +1300,7 @@ import { wgslSource } from './shader.js';
         { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
         { binding: 2, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
         { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: {} },
-        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
       ],
     });
     pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] });
