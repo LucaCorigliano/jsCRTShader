@@ -46,6 +46,7 @@ import { wgslSource } from './shader.js';
   let historyValid = false;
   let historyFormat = 'rgba16float';
   let lastFrameTime = 0;
+  let pipelinesReady = false;
   let sourceTexW = 0;
   let sourceTexH = 0;
   let configuredFormat = null;
@@ -1312,7 +1313,7 @@ import { wgslSource } from './shader.js';
 
     resize();
     configureContext();
-    createPipelines();
+    await createPipelines();
     ensureSourceTexture(srcW, srcH);
     ensureHistoryTextures(canvas.width, canvas.height);
     updateBindGroups();
@@ -1340,12 +1341,12 @@ import { wgslSource } from './shader.js';
     const histText = historyFormat === 'rgba16float' ? 'history=rgba16f' : `history=${historyFormat}`;
     setStatus(`${hdrText} · ${histText} · dpr=${(window.devicePixelRatio || 1).toFixed(2)}`);
     if (prevFormat && prevFormat !== configuredFormat && pipelineLayout) {
-      createPipelines();
+      createPipelines().catch((err) => console.error('Pipeline rebuild failed', err));
     }
     needsReconfigure = false;
   }
 
-  function createPipelines() {
+  async function createPipelines() {
     const shaderModule = device.createShaderModule({ code: wgslSource });
     if (shaderModule.compilationInfo) {
       shaderModule.compilationInfo().then((info) => {
@@ -1362,35 +1363,33 @@ import { wgslSource } from './shader.js';
         console.warn('Shader compilation info unavailable', err);
       });
     }
-    const pushScope = gpuDebug ? () => device.pushErrorScope('validation') : () => {};
-    const popScope = gpuDebug
-      ? () => device.popErrorScope().then((err) => err && console.error('Pipeline validation error', err))
-      : () => Promise.resolve();
     try {
-      pushScope();
-      beamPipeline = device.createRenderPipeline({
+      pipelinesReady = false;
+      const createPipeline = device.createRenderPipelineAsync
+        ? (desc) => device.createRenderPipelineAsync(desc)
+        : (desc) => Promise.resolve(device.createRenderPipeline(desc));
+      beamPipeline = await createPipeline({
         layout: pipelineLayout,
         vertex: { module: shaderModule, entryPoint: 'vs' },
         fragment: { module: shaderModule, entryPoint: 'fs_beam', targets: [{ format: historyFormat }] },
         primitive: { topology: 'triangle-list' },
       });
-      popScope();
-      pushScope();
-      finalPipeline = device.createRenderPipeline({
+      finalPipeline = await createPipeline({
         layout: pipelineLayout,
         vertex: { module: shaderModule, entryPoint: 'vs' },
         fragment: { module: shaderModule, entryPoint: 'fs_final', targets: [{ format: configuredFormat }] },
         primitive: { topology: 'triangle-list' },
       });
-      popScope();
+      pipelinesReady = true;
     } catch (err) {
+      pipelinesReady = false;
       console.error('Pipeline creation failed', err);
       setStatus(`Pipeline error: ${err.message || 'Unknown'}`, 'bad');
     }
   }
 
   function frame(now) {
-    if (!device || !context || !beamPipeline || !finalPipeline || bindGroups.length < 2) return;
+    if (!device || !context || !pipelinesReady || !beamPipeline || !finalPipeline || bindGroups.length < 2) return;
     const resized = resizeCanvasToDisplaySize();
     if (resized || needsReconfigure) {
       configureContext();
