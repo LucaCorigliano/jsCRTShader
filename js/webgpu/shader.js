@@ -151,10 +151,11 @@ fn fs_beam(in: VSOut) -> @location(0) vec4f {
   let lineHash = hash21(vec2f(floor(uvw.y * dstSize.y), floor(time * 120.0)));
   srcCoord.x += (lineHash - 0.5) * syncJitter * 2.0;
 
-  let scanRate = 60.0;
+  let decayAvg = clamp((decay.x + decay.y + decay.z) / 3.0, 0.0, 0.999);
+  let scanRate = 59.94;
   let scanPos = fract(time * scanRate) * srcSize.y;
   let scanDist = abs(srcCoord.y - scanPos);
-  let scanWidth = mix(0.15, 0.75, 1.0 - scanline);
+  let scanWidth = mix(0.18, 1.25, decayAvg);
   let scanGate = exp(-scanDist * scanDist / (scanWidth * scanWidth + 1e-4));
 
   let yCenter = floor(srcCoord.y) + 0.5;
@@ -315,7 +316,7 @@ fn fs_beam(in: VSOut) -> @location(0) vec4f {
   beamColor += vec3f(hdrBoost * max(0.0, hdrHighlights));
 
   beamColor *= mix(1.0, scanW, 1.0 - scanline);
-  beamColor *= mix(1.0, scanGate, clamp(scanline * 1.2, 0.0, 1.0));
+  beamColor *= scanGate;
 
   if (maskStrength > 0.0) {
     let subPos = srcCoord.x * 3.0;
@@ -325,11 +326,13 @@ fn fs_beam(in: VSOut) -> @location(0) vec4f {
     let cellY = fract(srcCoord.y);
     let dy2 = abs(cellY - 0.5) / 0.5;
     let thickness = clamp(maskThickness, 0.2, 2.0);
-    let width = mix(0.18, 0.65, clamp(thickness * 0.5, 0.0, 1.0));
-    let roundness = mix(0.6, 2.2, clamp(maskRound, 0.0, 1.0));
+    let width = mix(0.15, 0.55, clamp(thickness * 0.5, 0.0, 1.0));
+    let roundness = mix(0.6, 2.1, clamp(maskRound, 0.0, 1.0));
     var mask = vec3f(1.0);
     if (maskType == 0u) {
-      let spot = exp(-pow(dx / width, 2.0)) * exp(-pow(dy2 * roundness, 2.0));
+      let stripe = exp(-pow(dx / width, 2.0));
+      let vert = exp(-pow(dy2 * (0.35 + roundness * 0.35), 2.0));
+      let spot = stripe * mix(1.0, vert, 0.35);
       let subMask = select(
         select(vec3f(1.0, 0.35, 0.35), vec3f(0.35, 1.0, 0.35), sub == 1),
         vec3f(0.35, 0.35, 1.0),
@@ -342,6 +345,10 @@ fn fs_beam(in: VSOut) -> @location(0) vec4f {
     }
     beamColor *= mix(vec3f(1.0), mask, maskStrength);
   }
+
+  let postLum = luma(beamColor);
+  let hot2 = pow(max(postLum - 0.35, 0.0), 1.35) * 0.85 * max(0.0, hdrHighlights);
+  beamColor += vec3f(hot2);
 
   let mixed = prev * decay + beamColor * (vec3f(1.0) - decay);
   var outColor = max(mixed, vec3f(0.0));
