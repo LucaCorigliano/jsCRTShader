@@ -152,10 +152,11 @@ fn fs_beam(in: VSOut) -> @location(0) vec4f {
   srcCoord.x += (lineHash - 0.5) * syncJitter * 2.0;
 
   let decayAvg = clamp((decay.x + decay.y + decay.z) / 3.0, 0.0, 0.999);
-  let frameRate = 60.0;
-  let phase = fract(time * frameRate + (srcCoord.y / max(srcSize.y, 1.0)));
-  let sweepWidth = mix(0.012, 0.12, decayAvg);
-  let scanGate = exp(-phase * phase / (sweepWidth * sweepWidth + 1e-4));
+  let lineRate = max(1.0, srcSize.y) * 59.94;
+  let scanPos = fract(time * lineRate) * srcSize.y;
+  let scanDist = abs(srcCoord.y - scanPos);
+  let scanWidth = mix(0.25, 2.5, decayAvg);
+  let scanGate = exp(-scanDist * scanDist / (scanWidth * scanWidth + 1e-4));
 
   let yCenter = floor(srcCoord.y) + 0.5;
   let dy = (srcCoord.y - yCenter) * par.y;
@@ -311,7 +312,7 @@ fn fs_beam(in: VSOut) -> @location(0) vec4f {
 
   beamColor *= max(0.0, hdrGain);
   let preLum = luma(beamColor);
-  let hdrBoost = pow(max(preLum - 0.5, 0.0) * 2.6, 1.7) * 3.8;
+  let hdrBoost = pow(max(preLum - 0.45, 0.0) * 3.0, 1.4) * 4.2;
   beamColor += vec3f(hdrBoost * max(0.0, hdrHighlights));
 
   beamColor *= mix(1.0, scanW, 1.0 - scanline);
@@ -322,11 +323,8 @@ fn fs_beam(in: VSOut) -> @location(0) vec4f {
     let sub = i32(floor(subPos)) % 3;
     let subX = fract(subPos);
     let dx = abs(subX - 0.5) / 0.5;
-    let cellY = fract(srcCoord.y);
-    let dy2 = abs(cellY - 0.5) / 0.5;
     let thickness = clamp(maskThickness, 0.2, 2.0);
-    let width = mix(0.15, 0.55, clamp(thickness * 0.5, 0.0, 1.0));
-    let roundness = mix(0.6, 2.1, clamp(maskRound, 0.0, 1.0));
+    let width = mix(0.12, 0.48, clamp(thickness * 0.5, 0.0, 1.0));
     var mask = vec3f(1.0);
     if (maskType == 0u) {
       let stripe = exp(-pow(dx / width, 2.0));
@@ -345,7 +343,7 @@ fn fs_beam(in: VSOut) -> @location(0) vec4f {
   }
 
   let postLum = luma(beamColor);
-  let hot2 = pow(max(postLum - 0.35, 0.0), 1.35) * 0.85 * max(0.0, hdrHighlights);
+  let hot2 = pow(max(postLum - 0.32, 0.0), 1.3) * 1.2 * max(0.0, hdrHighlights);
   beamColor += vec3f(hot2);
 
   let mixed = prev * decay + beamColor * (vec3f(1.0) - decay);
