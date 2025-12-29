@@ -45,14 +45,14 @@ fn gauss(x: f32, sigma: f32, k: f32) -> f32 {
 }
 
 fn sampleTex(src: vec2f) -> vec3f {
-  let v0 = P.data[0];
-  let sz = v0.xy;
+  let p0 = P.data[0];
+  let sz = p0.xy;
   return textureSampleLevel(srcTex, srcSampler, (src + vec2f(0.5)) / sz, 0.0).rgb;
 }
 
 fn sampleTexLinear(src: vec2f) -> vec3f {
-  let v0 = P.data[0];
-  let sz = v0.xy;
+  let p0 = P.data[0];
+  let sz = p0.xy;
   return textureSampleLevel(srcTex, srcSamplerLinear, (src + vec2f(0.5)) / sz, 0.0).rgb;
 }
 
@@ -82,80 +82,73 @@ fn warpUv(uvIn: vec2f, dstSize: vec2f, curvature: f32, time: f32, syncJitter: f3
 
 @fragment
 fn fs_beam(in: VSOut) -> @location(0) vec4f {
-  let v0 = P.data[0];
-  let v1 = P.data[1];
-  let v2 = P.data[2];
-  let v3 = P.data[3];
-  let v4 = P.data[4];
-  let v5 = P.data[5];
-  let v6 = P.data[6];
-  let v7 = P.data[7];
-  let v8 = P.data[8];
-  let v9 = P.data[9];
-  let v10 = P.data[10];
-  let v11 = P.data[11];
+  let p0 = P.data[0];
+  let p1 = P.data[1];
+  let p2 = P.data[2];
+  let p3 = P.data[3];
+  let p4 = P.data[4];
+  let p5 = P.data[5];
+  let p6 = P.data[6];
+  let p7 = P.data[7];
+  let p8 = P.data[8];
+  let p9 = P.data[9];
+  let p10 = P.data[10];
+  let p11 = P.data[11];
 
-  let srcSize = v0.xy;
-  let dstSize = v0.zw;
-  let par = max(v1.xy, vec2f(1e-6));
-  let scanline = v1.z;
-  let beamMin = v1.w;
-  let beamMax = v2.x;
-  let sharp = v2.y;
-  let maskStrength = v2.z;
-  let bloom = v3.x;
-  let bloomSigma = v3.y;
-  let halation = v3.z;
-  let halationSigma = v3.w;
-  let cax = v4.x;
-  let cay = v4.y;
-  let caEdge = v4.z;
-  let energyLock = v4.w;
-  let maskThickness = v5.x;
-  let decay = vec3f(v5.y, v5.z, v5.w);
-  let maskRound = v6.x;
-  let chromaSpill = v6.y;
-  let chromaSigma = v6.z;
-  let chromaGain = v6.w;
-  let blackSpill = v7.x;
-  let blackSigma = v7.y;
-  let curvature = v7.z;
-  let spillBias = v8.w;
-  let time = v9.x;
-  let syncJitter = v9.y;
-  let syncJitterSpeed = v9.z;
-  let bypass = v10.z;
-  let maskType = u32(v10.w + 0.5);
-  let hdrGain = v11.y;
-  let hdrHighlights = v11.z;
+  let srcSize = p0.xy;
+  let dstSize = p0.zw;
+  let par = max(p1.xy, vec2f(1e-6));
+  let scanline = p1.z;
+  let beamMin = p1.w;
+  let beamMax = p2.x;
+  let sharp = p2.y;
+  let maskStrength = p2.z;
+  let bloom = p3.x;
+  let bloomSigma = p3.y;
+  let halation = p3.z;
+  let halationSigma = p3.w;
+  let cax = p4.x;
+  let cay = p4.y;
+  let caEdge = p4.z;
+  let energyLock = p4.w;
+  let maskThickness = p5.x;
+  let maskRound = p6.x;
+  let chromaSpill = p6.y;
+  let chromaSigma = p6.z;
+  let chromaGain = p6.w;
+  let blackSpill = p7.x;
+  let blackSigma = p7.y;
+  let curvature = p7.z;
+  let phosphorResponse = clamp(p8.z, 0.0, 1.0);
+  let spillBias = p8.w;
+  let time = p9.x;
+  let syncJitter = p9.y;
+  let syncJitterSpeed = p9.z;
+  let bypass = p10.z;
+  let maskType = u32(p10.w + 0.5);
+  let hdrGain = p11.y;
+  let hdrHighlights = p11.z;
 
   let uvIn = vec2f(in.uv.x, 1.0 - in.uv.y);
-  let historyLdr = v11.w;
-  let prevEncoded = sampleHistory(uvIn);
-  var prev = prevEncoded;
-  if (historyLdr > 0.5) {
-    prev = hdrDecode(prevEncoded);
-  }
+  let historyLdr = p11.w;
   if (bypass > 0.5) {
-    return vec4f(prev, 1.0);
+    return vec4f(0.0, 0.0, 0.0, 1.0);
   }
 
   let warped = warpUv(uvIn, dstSize, curvature, time, syncJitter, syncJitterSpeed);
   let uvw = warped.xy;
   if (uvw.x < 0.0 || uvw.x > 1.0 || uvw.y < 0.0 || uvw.y > 1.0) {
-    let faded = prev * decay;
-    return vec4f(faded, 1.0);
+    return vec4f(0.0, 0.0, 0.0, 1.0);
   }
 
   var srcCoord = uvw * srcSize;
   let lineHash = hash21(vec2f(floor(uvw.y * dstSize.y), floor(time * 120.0)));
   srcCoord.x += (lineHash - 0.5) * syncJitter * 2.0;
 
-  let decayAvg = clamp((decay.x + decay.y + decay.z) / 3.0, 0.0, 0.999);
   let lineRate = max(1.0, srcSize.y) * 59.94;
   let scanPos = fract(time * lineRate) * srcSize.y;
   let scanDist = abs(srcCoord.y - scanPos);
-  let scanWidth = mix(0.9, 0.2, scanline) * mix(1.0, 1.6, decayAvg);
+  let scanWidth = mix(0.9, 0.2, scanline) * mix(1.0, 1.35, phosphorResponse);
   let scanGate = exp(-scanDist * scanDist / (scanWidth * scanWidth + 1e-4));
 
   let yCenter = floor(srcCoord.y) + 0.5;
@@ -165,9 +158,9 @@ fn fs_beam(in: VSOut) -> @location(0) vec4f {
   let y0 = yCenter - 1.0;
   let y1 = yCenter;
   let y2 = yCenter + 1.0;
-  let v0 = gauss((srcCoord.y - y0) * par.y, sigmaY, mix(1.0, 2.8, sharp));
-  let v1 = gauss((srcCoord.y - y1) * par.y, sigmaY, mix(1.0, 2.8, sharp));
-  let v2 = gauss((srcCoord.y - y2) * par.y, sigmaY, mix(1.0, 2.8, sharp));
+  let wy0 = gauss((srcCoord.y - y0) * par.y, sigmaY, mix(1.0, 2.8, sharp));
+  let wy1 = gauss((srcCoord.y - y1) * par.y, sigmaY, mix(1.0, 2.8, sharp));
+  let wy2 = gauss((srcCoord.y - y2) * par.y, sigmaY, mix(1.0, 2.8, sharp));
   let xCenter = floor(srcCoord.x) + 0.5;
   let cCenter = sampleTex(vec2f(xCenter, yCenter));
   let lum = luma(cCenter);
@@ -192,7 +185,7 @@ fn fs_beam(in: VSOut) -> @location(0) vec4f {
     let caAmount = vec2f(cax, cay) * par;
     let caStrength = mix(0.35, 1.35, clamp(caEdgeStrength, 0.0, 1.0));
 
-    if (v0 > 1e-4) {
+    if (wy0 > 1e-4) {
       let base0 = vec2f(sampleX, y0);
       let lens0 = (base0 - (srcSize * 0.5)) / max(vec2f(1.0), srcSize);
       let weighted0 = vec2f(lens0.x, lens0.y * (srcSize.x / max(srcSize.y, 1.0)));
@@ -203,14 +196,14 @@ fn fs_beam(in: VSOut) -> @location(0) vec4f {
       let tapG0 = sampleTexLinear(base0).g;
       let tapB0 = sampleTexLinear(base0 + pixelShift0).b;
       let s0 = vec3f(tapR0, tapG0, tapB0);
-      let w0 = w * v0;
+      let w0 = w * wy0;
       accum += s0 * w0;
       wsum += w0;
       LsrcAcc += luma(s0) * w0;
       Lw += w0;
     }
 
-    if (v1 > 1e-4) {
+    if (wy1 > 1e-4) {
       let base1 = vec2f(sampleX, y1);
       let lens1 = (base1 - (srcSize * 0.5)) / max(vec2f(1.0), srcSize);
       let weighted1 = vec2f(lens1.x, lens1.y * (srcSize.x / max(srcSize.y, 1.0)));
@@ -221,14 +214,14 @@ fn fs_beam(in: VSOut) -> @location(0) vec4f {
       let tapG1 = sampleTexLinear(base1).g;
       let tapB1 = sampleTexLinear(base1 + pixelShift1).b;
       let s1 = vec3f(tapR1, tapG1, tapB1);
-      let w1 = w * v1;
+      let w1 = w * wy1;
       accum += s1 * w1;
       wsum += w1;
       LsrcAcc += luma(s1) * w1;
       Lw += w1;
     }
 
-    if (v2 > 1e-4) {
+    if (wy2 > 1e-4) {
       let base2 = vec2f(sampleX, y2);
       let lens2 = (base2 - (srcSize * 0.5)) / max(vec2f(1.0), srcSize);
       let weighted2 = vec2f(lens2.x, lens2.y * (srcSize.x / max(srcSize.y, 1.0)));
@@ -239,7 +232,7 @@ fn fs_beam(in: VSOut) -> @location(0) vec4f {
       let tapG2 = sampleTexLinear(base2).g;
       let tapB2 = sampleTexLinear(base2 + pixelShift2).b;
       let s2 = vec3f(tapR2, tapG2, tapB2);
-      let w2 = w * v2;
+      let w2 = w * wy2;
       accum += s2 * w2;
       wsum += w2;
       LsrcAcc += luma(s2) * w2;
@@ -401,12 +394,12 @@ fn fs_beam(in: VSOut) -> @location(0) vec4f {
   let hot2 = pow(max(postLum - 0.30, 0.0), 1.2) * 1.6 * max(0.0, hdrHighlights);
   beamColor += vec3f(hot2);
 
-  let phosphorK = 1.0 + 2.4 * max(0.0, hdrHighlights);
+  let phosphorK = mix(0.9, 3.2, phosphorResponse) * (1.0 + 0.6 * max(0.0, hdrHighlights));
+  let phosphorMix = mix(0.15, 0.75, phosphorResponse);
   let phosphor = vec3f(1.0) - exp(-beamColor * phosphorK);
-  beamColor = mix(beamColor, phosphor * (1.1 + 0.3 * max(0.0, hdrHighlights)), 0.55);
+  beamColor = mix(beamColor, phosphor * (1.05 + 0.35 * max(0.0, hdrHighlights)), phosphorMix);
 
-  let mixed = prev * decay + beamColor * (vec3f(1.0) - decay);
-  var outColor = max(mixed, vec3f(0.0));
+  var outColor = max(beamColor, vec3f(0.0));
   if (historyLdr > 0.5) {
     outColor = hdrEncode(outColor);
   }
@@ -415,29 +408,29 @@ fn fs_beam(in: VSOut) -> @location(0) vec4f {
 
 @fragment
 fn fs_final(in: VSOut) -> @location(0) vec4f {
-  let v0 = P.data[0];
-  let v2 = P.data[2];
-  let v7 = P.data[7];
-  let v8 = P.data[8];
-  let v9 = P.data[9];
-  let v10 = P.data[10];
-  let v11 = P.data[11];
+  let p0 = P.data[0];
+  let p2 = P.data[2];
+  let p7 = P.data[7];
+  let p8 = P.data[8];
+  let p9 = P.data[9];
+  let p10 = P.data[10];
+  let p11 = P.data[11];
 
-  let dstSize = v0.zw;
-  let gamma = v2.w;
-  let curvature = v7.z;
-  let vignette = v7.w;
-  let postContrast = v8.x;
-  let postSaturation = v8.y;
-  let time = v9.x;
-  let syncJitter = v9.y;
-  let syncJitterSpeed = v9.z;
-  let rollingBand = v9.w;
-  let rollingBandSpeed = v10.x;
-  let noiseStrength = v10.y;
-  let bypass = v10.z;
-  let debugHDR = v11.x;
-  let historyLdr = v11.w;
+  let dstSize = p0.zw;
+  let gamma = p2.w;
+  let curvature = p7.z;
+  let vignette = p7.w;
+  let postContrast = p8.x;
+  let postSaturation = p8.y;
+  let time = p9.x;
+  let syncJitter = p9.y;
+  let syncJitterSpeed = p9.z;
+  let rollingBand = p9.w;
+  let rollingBandSpeed = p10.x;
+  let noiseStrength = p10.y;
+  let bypass = p10.z;
+  let debugHDR = p11.x;
+  let historyLdr = p11.w;
 
   if (bypass > 0.5) {
     let src = textureSampleLevel(srcTex, srcSamplerLinear, in.uv, 0.0).rgb;

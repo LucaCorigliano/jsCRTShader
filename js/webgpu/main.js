@@ -55,6 +55,8 @@ import { wgslSource } from './shader.js';
 
   // Source / emulator state
   let srcW = 320, srcH = 240;
+  let imageSrcW = srcW, imageSrcH = srcH;
+  let emulatorSrcW = srcW, emulatorSrcH = srcH;
   let parXVal = 1, parYVal = 1;
   let fitContain = false;
   let dockVisible = true;
@@ -75,6 +77,7 @@ import { wgslSource } from './shader.js';
   const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp']);
   const BIOS_EXTS = new Set(['.bin', '.rom', '.bios']);
   const ISO_EXTS = new Set(['.bin', '.iso', '.img', '.pbp', '.exe', '.psx', '.cue', '.chd']);
+  const preferDirectEmulatorCapture = true;
   let needsReconfigure = true;
   const PRESET_KEY = 'crtShader.webgpu.presets.v1';
   const LAST_KEY = 'crtShader.webgpu.last.v1';
@@ -178,22 +181,12 @@ import { wgslSource } from './shader.js';
     return false;
   }
 
-  function computePhosphorDecay(dt) {
-    const safeDt = Math.max(0, Math.min(dt, 0.1));
-    const p = Math.max(0, Math.min(1, params.persistence));
-    if (p <= 0.001) return [0, 0, 0];
-    const base = 0.006 + Math.pow(p, 1.9) * 0.75;
-    const tauR = base * 0.95;
-    const tauG = base * 1.18;
-    const tauB = base * 0.80;
-    const decayR = Math.exp(-safeDt / tauR);
-    const decayG = Math.exp(-safeDt / tauG);
-    const decayB = Math.exp(-safeDt / tauB);
-    return [decayR, decayG, decayB];
+  function computeHistoryDecay() {
+    return [0, 0, 0];
   }
 
   function updateUniformBuffer(deltaTime, resetHistory) {
-    const [decayR, decayG, decayB] = resetHistory ? [0, 0, 0] : computePhosphorDecay(deltaTime || 0);
+    const [decayR, decayG, decayB] = resetHistory ? [0, 0, 0] : computeHistoryDecay();
     uniformData[0] = srcW; // v0
     uniformData[1] = srcH;
     uniformData[2] = canvas.width;
@@ -236,7 +229,7 @@ import { wgslSource } from './shader.js';
 
     uniformData[32] = params.postContrast; // v8
     uniformData[33] = params.postSaturation;
-    uniformData[34] = 0.0;
+    uniformData[34] = params.persistence;
     uniformData[35] = params.spillBias;
 
     uniformData[36] = params.time; // v9
@@ -257,14 +250,35 @@ import { wgslSource } from './shader.js';
     device.queue.writeBuffer(uniformBuffer, 0, uniformData.buffer);
   }
 
-  function setSrcSize(w, h) {
+  function setSrcSize(w, h, mode = sourceMode, updateInputs = true) {
+    if (!w || !h) return;
     srcW = w;
     srcH = h;
     historyValid = false;
-    const wEl = document.getElementById('srcW');
-    const hEl = document.getElementById('srcH');
-    if (wEl) wEl.value = w;
-    if (hEl) hEl.value = h;
+    if (mode === 'image') {
+      imageSrcW = w;
+      imageSrcH = h;
+    } else if (mode === 'emulator') {
+      emulatorSrcW = w;
+      emulatorSrcH = h;
+    }
+    if (updateInputs) {
+      const wEl = document.getElementById('srcW');
+      const hEl = document.getElementById('srcH');
+      if (wEl) wEl.value = w;
+      if (hEl) hEl.value = h;
+    }
+  }
+
+  function setStoredSrcSize(mode, w, h) {
+    if (!w || !h) return;
+    if (mode === 'image') {
+      imageSrcW = w;
+      imageSrcH = h;
+    } else if (mode === 'emulator') {
+      emulatorSrcW = w;
+      emulatorSrcH = h;
+    }
   }
 
   function ensureSourceTexture(w, h) {
@@ -345,12 +359,13 @@ import { wgslSource } from './shader.js';
       return;
     }
     imageElement = el;
+    setStoredSrcSize('image', w, h);
     if (sourceMode === 'image') {
       sourceElement = el;
+      setSrcSize(w, h, 'image');
+      ensureSourceTexture(w, h);
+      resize();
     }
-    setSrcSize(w, h);
-    ensureSourceTexture(w, h);
-    resize();
     scheduleAutosave();
   }
 
@@ -396,18 +411,28 @@ import { wgslSource } from './shader.js';
     if (mode === 'image') {
       if (imageElement) {
         sourceElement = imageElement;
+        const nextW = imageSrcW || imageElement.naturalWidth || imageElement.width || srcW;
+        const nextH = imageSrcH || imageElement.naturalHeight || imageElement.height || srcH;
+        setSrcSize(nextW, nextH, 'image');
+      } else if (imageSrcW && imageSrcH) {
+        setSrcSize(imageSrcW, imageSrcH, 'image');
       }
     } else {
       if (emulatorCanvas) {
+        const dims = readEmulatorDimensions();
+        if (dims && dims.w && dims.h) {
+          setSrcSize(dims.w, dims.h, 'emulator');
+        } else if (emulatorSrcW && emulatorSrcH) {
+          setSrcSize(emulatorSrcW, emulatorSrcH, 'emulator');
+        }
         const videoReady = emulatorVideo && emulatorVideo.videoWidth && emulatorVideo.videoHeight;
         sourceElement = videoReady ? emulatorVideo : emulatorCanvas;
-        setSrcSize(
-          (videoReady && emulatorVideo.videoWidth) || emulatorCanvas.width || srcW,
-          (videoReady && emulatorVideo.videoHeight) || emulatorCanvas.height || srcH
-        );
         syncEmulatorDimensions();
       } else {
         sourceElement = null;
+        if (emulatorSrcW && emulatorSrcH) {
+          setSrcSize(emulatorSrcW, emulatorSrcH, 'emulator');
+        }
         setEmulatorStatus('Emulator not loaded yet.', false);
       }
     }
@@ -798,8 +823,9 @@ import { wgslSource } from './shader.js';
     const aspect = dims.aspect || (w / h);
     const changed = w !== lastEmulatorDims.w || h !== lastEmulatorDims.h;
     if (changed) lastEmulatorDims = { w, h };
+    setStoredSrcSize('emulator', w, h);
     if (sourceMode === 'emulator' && (force || w !== srcW || h !== srcH)) {
-      setSrcSize(w, h);
+      setSrcSize(w, h, 'emulator');
       resize();
     }
     if (emulatorHost) emulatorHost.style.setProperty('--emu-aspect', aspect.toFixed(4));
@@ -880,14 +906,15 @@ import { wgslSource } from './shader.js';
     emulatorCanvas.width = emulatorCanvas.width || 320;
     emulatorCanvas.height = emulatorCanvas.height || 240;
     attachEmulatorStream(canvasEl);
+    setStoredSrcSize('emulator', emulatorCanvas.width || emulatorSrcW, emulatorCanvas.height || emulatorSrcH);
     syncEmulatorDimensions(true);
     if (sourceMode === 'emulator') {
       const videoReady = emulatorVideo && emulatorVideo.videoWidth && emulatorVideo.videoHeight;
       sourceElement = videoReady ? emulatorVideo : emulatorCanvas;
       if (videoReady) {
-        setSrcSize(emulatorVideo.videoWidth, emulatorVideo.videoHeight);
+        setSrcSize(emulatorVideo.videoWidth, emulatorVideo.videoHeight, 'emulator');
       } else {
-        setSrcSize(canvasEl.width || 640, canvasEl.height || 480);
+        setSrcSize(canvasEl.width || 640, canvasEl.height || 480, 'emulator');
       }
     }
     currentBuiltinId = null;
@@ -895,8 +922,11 @@ import { wgslSource } from './shader.js';
     if (emulatorResizeObserver) emulatorResizeObserver.disconnect();
     emulatorResizeObserver = new ResizeObserver(() => {
       if (!emulatorCanvas) return;
+      const w = emulatorCanvas.width || emulatorSrcW || srcW;
+      const h = emulatorCanvas.height || emulatorSrcH || srcH;
+      setStoredSrcSize('emulator', w, h);
       if (sourceMode === 'emulator') {
-        setSrcSize(emulatorCanvas.width || srcW, emulatorCanvas.height || srcH);
+        setSrcSize(w, h, 'emulator');
         resize();
       }
     });
@@ -905,19 +935,18 @@ import { wgslSource } from './shader.js';
   }
 
   function attachEmulatorStream(canvasEl) {
-    if (!canvasEl || !canvasEl.captureStream) {
-      emulatorVideo = null;
-      return;
-    }
     if (emulatorStream) {
       emulatorStream.getTracks().forEach((track) => track.stop());
       emulatorStream = null;
     }
+    emulatorVideo = null;
+    if (!canvasEl || preferDirectEmulatorCapture || !canvasEl.captureStream) return;
+
     emulatorStream = canvasEl.captureStream(60);
     const track = emulatorStream.getVideoTracks()[0];
     const settings = track && track.getSettings ? track.getSettings() : null;
     if (settings && settings.width && settings.height && sourceMode === 'emulator') {
-      setSrcSize(settings.width, settings.height);
+      setSrcSize(settings.width, settings.height, 'emulator');
     }
     emulatorVideo = document.createElement('video');
     emulatorVideo.muted = true;
@@ -927,7 +956,7 @@ import { wgslSource } from './shader.js';
     emulatorVideo.addEventListener('loadedmetadata', () => {
       if (sourceMode === 'emulator') {
         sourceElement = emulatorVideo;
-        setSrcSize(emulatorVideo.videoWidth || canvasEl.width || srcW, emulatorVideo.videoHeight || canvasEl.height || srcH);
+        setSrcSize(emulatorVideo.videoWidth || canvasEl.width || srcW, emulatorVideo.videoHeight || canvasEl.height || srcH, 'emulator');
         resize();
       }
       syncEmulatorDimensions(true);
@@ -1034,7 +1063,7 @@ import { wgslSource } from './shader.js';
     }
   }
 
-  function getSettings() {
+  function getLookSettings() {
     const o = {};
     sliderSettingIds.forEach((id) => {
       const el = document.getElementById(id);
@@ -1042,8 +1071,26 @@ import { wgslSource } from './shader.js';
     });
     const mt = document.getElementById('maskType');
     if (mt) o.maskType = parseInt(mt.value, 10);
+    return o;
+  }
+
+  function filterLookSettings(raw = {}) {
+    const o = {};
+    sliderSettingIds.forEach((id) => {
+      if (raw[id] !== undefined) o[id] = raw[id];
+    });
+    if (raw.maskType !== undefined) o.maskType = raw.maskType;
+    return o;
+  }
+
+  function getSessionSettings() {
+    const o = getLookSettings();
     o.srcW = srcW;
     o.srcH = srcH;
+    o.imageSrcW = imageSrcW;
+    o.imageSrcH = imageSrcH;
+    o.emulatorSrcW = emulatorSrcW;
+    o.emulatorSrcH = emulatorSrcH;
     o.fitContain = fitContain;
     const parX = document.getElementById('parX');
     const parY = document.getElementById('parY');
@@ -1062,7 +1109,7 @@ import { wgslSource } from './shader.js';
     el.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
-  function applySettings(o) {
+  function applyLookSettings(o) {
     sliderSettingIds.forEach((id) => {
       if (id === 'pixelShape') return;
       if (o[id] !== undefined) setControl(id, o[id]);
@@ -1073,6 +1120,10 @@ import { wgslSource } from './shader.js';
       mt.value = String(o.maskType);
       mt.dispatchEvent(new Event('change', { bubbles: true }));
     }
+  }
+
+  function applySessionSettings(o) {
+    applyLookSettings(o);
     if (o.parX !== undefined || o.parY !== undefined) {
       const parX = document.getElementById('parX');
       const parY = document.getElementById('parY');
@@ -1080,15 +1131,24 @@ import { wgslSource } from './shader.js';
       if (parY && o.parY !== undefined) parY.value = o.parY;
       applyPAR();
     }
-    if (o.srcW !== undefined) {
-      srcW = o.srcW;
-      const wEl = document.getElementById('srcW');
-      if (wEl) wEl.value = String(o.srcW);
+    if (o.imageSrcW !== undefined && o.imageSrcH !== undefined) {
+      imageSrcW = o.imageSrcW;
+      imageSrcH = o.imageSrcH;
     }
-    if (o.srcH !== undefined) {
-      srcH = o.srcH;
-      const hEl = document.getElementById('srcH');
-      if (hEl) hEl.value = String(o.srcH);
+    if (o.emulatorSrcW !== undefined && o.emulatorSrcH !== undefined) {
+      emulatorSrcW = o.emulatorSrcW;
+      emulatorSrcH = o.emulatorSrcH;
+    }
+    if (o.srcW !== undefined && o.srcH !== undefined) {
+      const targetMode = o.sourceMode || sourceMode;
+      if (targetMode === 'emulator' && (o.emulatorSrcW === undefined || o.emulatorSrcH === undefined)) {
+        emulatorSrcW = o.srcW;
+        emulatorSrcH = o.srcH;
+      }
+      if (targetMode === 'image' && (o.imageSrcW === undefined || o.imageSrcH === undefined)) {
+        imageSrcW = o.srcW;
+        imageSrcH = o.srcH;
+      }
     }
     if (typeof o.fitContain === 'boolean') {
       fitContain = o.fitContain;
@@ -1107,6 +1167,10 @@ import { wgslSource } from './shader.js';
     }
     if (o.sourceMode) {
       setSourceMode(o.sourceMode);
+    } else if (sourceMode === 'image' && imageSrcW && imageSrcH) {
+      setSrcSize(imageSrcW, imageSrcH, 'image');
+    } else if (sourceMode === 'emulator' && emulatorSrcW && emulatorSrcH) {
+      setSrcSize(emulatorSrcW, emulatorSrcH, 'emulator');
     }
     if (o.emulatorCore && emulatorCoreSelect) {
       emulatorCoreSelect.value = o.emulatorCore;
@@ -1120,7 +1184,7 @@ import { wgslSource } from './shader.js';
     if (autosaveTimer) clearTimeout(autosaveTimer);
     autosaveTimer = setTimeout(() => {
       try {
-        localStorage.setItem(LAST_KEY, JSON.stringify(getSettings()));
+        localStorage.setItem(LAST_KEY, JSON.stringify(getSessionSettings()));
       } catch (err) {
         console.warn('Autosave failed', err);
       }
@@ -1132,10 +1196,14 @@ import { wgslSource } from './shader.js';
       const raw = localStorage.getItem(PRESET_KEY);
       if (!raw) return;
       const parsed = JSON.parse(raw);
+      const normalizePreset = (preset) => ({
+        name: preset.name,
+        settings: filterLookSettings(preset.settings || {}),
+      });
       if (Array.isArray(parsed)) {
-        presets = parsed;
+        presets = parsed.filter((p) => p && p.name).map(normalizePreset);
       } else if (parsed && Array.isArray(parsed.presets)) {
-        presets = parsed.presets;
+        presets = parsed.presets.filter((p) => p && p.name).map(normalizePreset);
       }
     } catch (err) {
       console.warn('Failed to load presets', err);
@@ -1180,7 +1248,7 @@ import { wgslSource } from './shader.js';
         activePreset = preset.name;
         const nameInput = document.getElementById('presetName');
         if (nameInput) nameInput.value = preset.name;
-        applySettings(preset.settings || {});
+        applyLookSettings(preset.settings || {});
         renderPresetList();
         scheduleAutosave();
       });
@@ -1192,7 +1260,7 @@ import { wgslSource } from './shader.js';
     const trimmed = (name || '').trim();
     const finalName = trimmed || makePresetName();
     const existing = presets.find((p) => p.name === finalName);
-    const payload = { name: finalName, settings: getSettings() };
+    const payload = { name: finalName, settings: getLookSettings() };
     if (existing) {
       existing.settings = payload.settings;
     } else {
@@ -1238,7 +1306,7 @@ import { wgslSource } from './shader.js';
           suffix += 1;
           name = `${preset.name} ${suffix}`;
         }
-        presets.push({ name, settings: preset.settings || {} });
+        presets.push({ name, settings: filterLookSettings(preset.settings || {}) });
       });
       persistPresets();
       renderPresetList();
@@ -1252,7 +1320,7 @@ import { wgslSource } from './shader.js';
       const raw = localStorage.getItem(LAST_KEY);
       if (!raw) return;
       const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === 'object') applySettings(parsed);
+      if (parsed && typeof parsed === 'object') applySessionSettings(parsed);
     } catch (err) {
       console.warn('Failed to load last session', err);
     }
@@ -1640,7 +1708,7 @@ import { wgslSource } from './shader.js';
     if (srcWInput) srcWInput.addEventListener('change', (e) => {
       const v = parseInt(e.target.value, 10);
       if (!Number.isNaN(v) && v > 0) {
-        srcW = v;
+        setSrcSize(v, srcH, 'image');
         resize();
         scheduleAutosave();
       }
@@ -1648,7 +1716,7 @@ import { wgslSource } from './shader.js';
     if (srcHInput) srcHInput.addEventListener('change', (e) => {
       const v = parseInt(e.target.value, 10);
       if (!Number.isNaN(v) && v > 0) {
-        srcH = v;
+        setSrcSize(srcW, v, 'image');
         resize();
         scheduleAutosave();
       }
@@ -1723,7 +1791,7 @@ import { wgslSource } from './shader.js';
     }
     if (presetNewBtn) {
       presetNewBtn.addEventListener('click', () => {
-        if (defaultSettings) applySettings(defaultSettings);
+        if (defaultSettings) applyLookSettings(defaultSettings);
         activePreset = null;
         if (presetNameInput) presetNameInput.value = '';
         renderPresetList();
@@ -1809,7 +1877,7 @@ import { wgslSource } from './shader.js';
 
   // Bootstrap
   initControls();
-  defaultSettings = getSettings();
+  defaultSettings = getLookSettings();
   loadPresets();
   renderPresetList();
   loadLastSettings();
