@@ -152,11 +152,10 @@ fn fs_beam(in: VSOut) -> @location(0) vec4f {
   srcCoord.x += (lineHash - 0.5) * syncJitter * 2.0;
 
   let decayAvg = clamp((decay.x + decay.y + decay.z) / 3.0, 0.0, 0.999);
-  let scanRate = 59.94;
-  let scanPos = fract(time * scanRate) * srcSize.y;
-  let scanDist = abs(srcCoord.y - scanPos);
-  let scanWidth = mix(0.18, 1.25, decayAvg);
-  let scanGate = exp(-scanDist * scanDist / (scanWidth * scanWidth + 1e-4));
+  let frameRate = 60.0;
+  let phase = fract(time * frameRate + (srcCoord.y / max(srcSize.y, 1.0)));
+  let sweepWidth = mix(0.012, 0.12, decayAvg);
+  let scanGate = exp(-phase * phase / (sweepWidth * sweepWidth + 1e-4));
 
   let yCenter = floor(srcCoord.y) + 0.5;
   let dy = (srcCoord.y - yCenter) * par.y;
@@ -331,8 +330,7 @@ fn fs_beam(in: VSOut) -> @location(0) vec4f {
     var mask = vec3f(1.0);
     if (maskType == 0u) {
       let stripe = exp(-pow(dx / width, 2.0));
-      let vert = exp(-pow(dy2 * (0.35 + roundness * 0.35), 2.0));
-      let spot = stripe * mix(1.0, vert, 0.35);
+      let spot = stripe;
       let subMask = select(
         select(vec3f(1.0, 0.35, 0.35), vec3f(0.35, 1.0, 0.35), sub == 1),
         vec3f(0.35, 0.35, 1.0),
