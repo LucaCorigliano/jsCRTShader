@@ -155,7 +155,7 @@ fn fs_beam(in: VSOut) -> @location(0) vec4f {
   let lineRate = max(1.0, srcSize.y) * 59.94;
   let scanPos = fract(time * lineRate) * srcSize.y;
   let scanDist = abs(srcCoord.y - scanPos);
-  let scanWidth = mix(0.25, 2.5, decayAvg);
+  let scanWidth = mix(0.9, 0.2, scanline) * mix(1.0, 1.6, decayAvg);
   let scanGate = exp(-scanDist * scanDist / (scanWidth * scanWidth + 1e-4));
 
   let yCenter = floor(srcCoord.y) + 0.5;
@@ -312,39 +312,59 @@ fn fs_beam(in: VSOut) -> @location(0) vec4f {
 
   beamColor *= max(0.0, hdrGain);
   let preLum = luma(beamColor);
-  let hdrBoost = pow(max(preLum - 0.45, 0.0) * 3.0, 1.4) * 4.2;
+  let hdrBoost = pow(max(preLum - 0.42, 0.0) * 3.2, 1.25) * 4.6;
   beamColor += vec3f(hdrBoost * max(0.0, hdrHighlights));
 
-  beamColor *= mix(1.0, scanW, 1.0 - scanline);
-  beamColor *= scanGate;
+  beamColor *= mix(1.0, scanW, scanline);
+  beamColor *= mix(1.0, scanGate, scanline);
 
   if (maskStrength > 0.0) {
     let subPos = srcCoord.x * 3.0;
-    let sub = i32(floor(subPos)) % 3;
-    let subX = fract(subPos);
+    let row = i32(floor(srcCoord.y)) & 1;
+    let dotMask = maskType == 2u;
+    let rowOffset = select(0.0, 0.5, dotMask && (row == 1));
+    let triadX = subPos + rowOffset;
+    let sub = i32(floor(triadX)) % 3;
+    let subX = fract(triadX);
     let dx = abs(subX - 0.5) / 0.5;
+    let cellY = fract(srcCoord.y);
+    let dy2 = abs(cellY - 0.5) / 0.5;
     let thickness = clamp(maskThickness, 0.2, 2.0);
     let width = mix(0.12, 0.48, clamp(thickness * 0.5, 0.0, 1.0));
+    let height = mix(0.25, 0.95, clamp(maskRound, 0.0, 1.0));
     var mask = vec3f(1.0);
     if (maskType == 0u) {
       let stripe = exp(-pow(dx / width, 2.0));
-      let spot = stripe;
+      let subMask = select(
+        select(vec3f(1.0, 0.35, 0.35), vec3f(0.35, 1.0, 0.35), sub == 1),
+        vec3f(0.35, 0.35, 1.0),
+        sub == 2
+      );
+      mask = subMask * stripe;
+    } else if (maskType == 1u) {
+      let stripe = exp(-pow(dx / width, 2.0));
+      mask = vec3f(stripe);
+    } else {
+      let spot = exp(-pow(dx / width, 2.0)) * exp(-pow(dy2 / height, 2.0));
       let subMask = select(
         select(vec3f(1.0, 0.35, 0.35), vec3f(0.35, 1.0, 0.35), sub == 1),
         vec3f(0.35, 0.35, 1.0),
         sub == 2
       );
       mask = subMask * spot;
-    } else {
-      let stripe = exp(-pow(dx / width, 2.0));
-      mask = vec3f(stripe);
     }
+    let grain = 0.92 + 0.12 * hash21(vec2f(floor(triadX), floor(srcCoord.y)));
+    mask *= grain;
     beamColor *= mix(vec3f(1.0), mask, maskStrength);
   }
 
   let postLum = luma(beamColor);
-  let hot2 = pow(max(postLum - 0.32, 0.0), 1.3) * 1.2 * max(0.0, hdrHighlights);
+  let hot2 = pow(max(postLum - 0.30, 0.0), 1.2) * 1.6 * max(0.0, hdrHighlights);
   beamColor += vec3f(hot2);
+
+  let phosphorK = 1.0 + 2.4 * max(0.0, hdrHighlights);
+  let phosphor = vec3f(1.0) - exp(-beamColor * phosphorK);
+  beamColor = mix(beamColor, phosphor * (1.1 + 0.3 * max(0.0, hdrHighlights)), 0.55);
 
   let mixed = prev * decay + beamColor * (vec3f(1.0) - decay);
   var outColor = max(mixed, vec3f(0.0));
