@@ -1503,6 +1503,9 @@ import { wgslSource } from './shader.js';
         document.body.classList.toggle('fullscreen', isFullscreen);
         toggleFullscreen.textContent = isFullscreen ? 'Exit Fullscreen' : 'Fullscreen';
         resize();
+        if (isFullscreen && sourceMode === 'emulator') {
+          requestAnimationFrame(() => focusEmulatorInput());
+        }
       };
       toggleFullscreen.addEventListener('click', () => {
         if (document.fullscreenElement) {

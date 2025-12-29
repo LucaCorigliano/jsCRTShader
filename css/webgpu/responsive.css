@@ -56,9 +56,20 @@
 
 body.fullscreen .topbar,
 body.fullscreen .panel,
-body.fullscreen .dock,
 body.fullscreen .stage-header {
   display: none;
+}
+
+body.fullscreen .dock {
+  position: fixed;
+  left: -9999px;
+  top: -9999px;
+  width: 420px;
+  height: 320px;
+  padding: 0;
+  border: none;
+  opacity: 0;
+  pointer-events: none;
 }
 
 body.fullscreen .layout {

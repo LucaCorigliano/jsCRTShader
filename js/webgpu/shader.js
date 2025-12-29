@@ -162,6 +162,12 @@ fn fs_beam(in: VSOut) -> @location(0) vec4f {
   let dy = (srcCoord.y - yCenter) * par.y;
   let sigmaY = 0.5 * par.y;
   let scanW = gauss(dy, sigmaY, mix(1.0, 2.8, sharp));
+  let y0 = yCenter - 1.0;
+  let y1 = yCenter;
+  let y2 = yCenter + 1.0;
+  let v0 = gauss((srcCoord.y - y0) * par.y, sigmaY, mix(1.0, 2.8, sharp));
+  let v1 = gauss((srcCoord.y - y1) * par.y, sigmaY, mix(1.0, 2.8, sharp));
+  let v2 = gauss((srcCoord.y - y2) * par.y, sigmaY, mix(1.0, 2.8, sharp));
   let xCenter = floor(srcCoord.x) + 0.5;
   let cCenter = sampleTex(vec2f(xCenter, yCenter));
   let lum = luma(cCenter);
@@ -172,43 +178,76 @@ fn fs_beam(in: VSOut) -> @location(0) vec4f {
   let halfWidth = i32(clamp(ceil(3.0 * beamSigmaBase * par.x), 3.0, 8.0));
   var accum = vec3f(0.0);
   var wsum = 0.0;
+  var LsrcAcc = 0.0;
+  var Lw = 0.0;
   let fx = (srcCoord.x - xCenter) * par.x;
 
   for (var i: i32 = -12; i <= 12; i = i + 1) {
     if (abs(i) > halfWidth) { continue; }
     let offset = f32(i);
     let sampleX = xCenter + offset;
-    let base = vec2f(sampleX, yCenter);
-    let lensNorm = (base - (srcSize * 0.5)) / max(vec2f(1.0), srcSize);
-    let weighted = vec2f(lensNorm.x, lensNorm.y * (srcSize.x / max(srcSize.y, 1.0)));
-    let dirLen = length(weighted);
-    let caDir = select(vec2f(0.0), weighted / dirLen, dirLen > 0.0);
-    let caAmount = vec2f(cax, cay) * par;
-    let caStrength = mix(0.35, 1.35, clamp(caEdgeStrength, 0.0, 1.0));
-    let pixelShift = caDir * caAmount * caStrength;
-    let tapR = sampleTexLinear(base - pixelShift).r;
-    let tapG = sampleTexLinear(base).g;
-    let tapB = sampleTexLinear(base + pixelShift).b;
-    let s = vec3f(tapR, tapG, tapB);
     let dx = (fx - offset * par.x);
     let w = gauss(dx, beamSigmaBase * par.x, mix(1.0, 3.0, sharp));
-    accum += s * w;
-    wsum += w;
+
+    let caAmount = vec2f(cax, cay) * par;
+    let caStrength = mix(0.35, 1.35, clamp(caEdgeStrength, 0.0, 1.0));
+
+    if (v0 > 1e-4) {
+      let base0 = vec2f(sampleX, y0);
+      let lens0 = (base0 - (srcSize * 0.5)) / max(vec2f(1.0), srcSize);
+      let weighted0 = vec2f(lens0.x, lens0.y * (srcSize.x / max(srcSize.y, 1.0)));
+      let dirLen0 = length(weighted0);
+      let caDir0 = select(vec2f(0.0), weighted0 / dirLen0, dirLen0 > 0.0);
+      let pixelShift0 = caDir0 * caAmount * caStrength;
+      let tapR0 = sampleTexLinear(base0 - pixelShift0).r;
+      let tapG0 = sampleTexLinear(base0).g;
+      let tapB0 = sampleTexLinear(base0 + pixelShift0).b;
+      let s0 = vec3f(tapR0, tapG0, tapB0);
+      let w0 = w * v0;
+      accum += s0 * w0;
+      wsum += w0;
+      LsrcAcc += luma(s0) * w0;
+      Lw += w0;
+    }
+
+    if (v1 > 1e-4) {
+      let base1 = vec2f(sampleX, y1);
+      let lens1 = (base1 - (srcSize * 0.5)) / max(vec2f(1.0), srcSize);
+      let weighted1 = vec2f(lens1.x, lens1.y * (srcSize.x / max(srcSize.y, 1.0)));
+      let dirLen1 = length(weighted1);
+      let caDir1 = select(vec2f(0.0), weighted1 / dirLen1, dirLen1 > 0.0);
+      let pixelShift1 = caDir1 * caAmount * caStrength;
+      let tapR1 = sampleTexLinear(base1 - pixelShift1).r;
+      let tapG1 = sampleTexLinear(base1).g;
+      let tapB1 = sampleTexLinear(base1 + pixelShift1).b;
+      let s1 = vec3f(tapR1, tapG1, tapB1);
+      let w1 = w * v1;
+      accum += s1 * w1;
+      wsum += w1;
+      LsrcAcc += luma(s1) * w1;
+      Lw += w1;
+    }
+
+    if (v2 > 1e-4) {
+      let base2 = vec2f(sampleX, y2);
+      let lens2 = (base2 - (srcSize * 0.5)) / max(vec2f(1.0), srcSize);
+      let weighted2 = vec2f(lens2.x, lens2.y * (srcSize.x / max(srcSize.y, 1.0)));
+      let dirLen2 = length(weighted2);
+      let caDir2 = select(vec2f(0.0), weighted2 / dirLen2, dirLen2 > 0.0);
+      let pixelShift2 = caDir2 * caAmount * caStrength;
+      let tapR2 = sampleTexLinear(base2 - pixelShift2).r;
+      let tapG2 = sampleTexLinear(base2).g;
+      let tapB2 = sampleTexLinear(base2 + pixelShift2).b;
+      let s2 = vec3f(tapR2, tapG2, tapB2);
+      let w2 = w * v2;
+      accum += s2 * w2;
+      wsum += w2;
+      LsrcAcc += luma(s2) * w2;
+      Lw += w2;
+    }
   }
   var beamColor = accum / max(wsum, 1e-5);
 
-  var LsrcAcc = 0.0;
-  var Lw = 0.0;
-  for (var j: i32 = -12; j <= 12; j = j + 1) {
-    if (abs(j) > halfWidth) { continue; }
-    let offset = f32(j);
-    let sampleX = xCenter + offset;
-    let s = sampleTex(vec2f(sampleX, yCenter));
-    let dx = (fx - offset * par.x);
-    let w = gauss(dx, beamSigmaBase * par.x, mix(1.0, 3.0, sharp));
-    LsrcAcc += luma(s) * w;
-    Lw += w;
-  }
   let Lsrc = select(luma(cCenter), LsrcAcc / Lw, Lw > 0.0);
   let Lb = luma(beamColor) + 1e-5;
   beamColor *= mix(1.0, Lsrc / Lb, clamp(energyLock, 0.0, 1.0));
