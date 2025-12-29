@@ -151,6 +151,12 @@ fn fs_beam(in: VSOut) -> @location(0) vec4f {
   let lineHash = hash21(vec2f(floor(uvw.y * dstSize.y), floor(time * 120.0)));
   srcCoord.x += (lineHash - 0.5) * syncJitter * 2.0;
 
+  let scanRate = 60.0;
+  let scanPos = fract(time * scanRate) * srcSize.y;
+  let scanDist = abs(srcCoord.y - scanPos);
+  let scanWidth = mix(0.15, 0.75, 1.0 - scanline);
+  let scanGate = exp(-scanDist * scanDist / (scanWidth * scanWidth + 1e-4));
+
   let yCenter = floor(srcCoord.y) + 0.5;
   let dy = (srcCoord.y - yCenter) * par.y;
   let sigmaY = 0.5 * par.y;
@@ -309,16 +315,18 @@ fn fs_beam(in: VSOut) -> @location(0) vec4f {
   beamColor += vec3f(hdrBoost * max(0.0, hdrHighlights));
 
   beamColor *= mix(1.0, scanW, 1.0 - scanline);
+  beamColor *= mix(1.0, scanGate, clamp(scanline * 1.2, 0.0, 1.0));
 
   if (maskStrength > 0.0) {
-    let cell = fract(srcCoord);
-    let sub = i32(floor(cell.x * 3.0));
-    let centerX = (f32(sub) + 0.5) / 3.0;
-    let dx = abs(cell.x - centerX) / (1.0 / 6.0);
-    let dy2 = abs(cell.y - 0.5) / 0.5;
+    let subPos = srcCoord.x * 3.0;
+    let sub = i32(floor(subPos)) % 3;
+    let subX = fract(subPos);
+    let dx = abs(subX - 0.5) / 0.5;
+    let cellY = fract(srcCoord.y);
+    let dy2 = abs(cellY - 0.5) / 0.5;
     let thickness = clamp(maskThickness, 0.2, 2.0);
-    let width = mix(0.4, 1.15, clamp(thickness * 0.5, 0.0, 1.0));
-    let roundness = mix(0.6, 2.0, clamp(maskRound, 0.0, 1.0));
+    let width = mix(0.18, 0.65, clamp(thickness * 0.5, 0.0, 1.0));
+    let roundness = mix(0.6, 2.2, clamp(maskRound, 0.0, 1.0));
     var mask = vec3f(1.0);
     if (maskType == 0u) {
       let spot = exp(-pow(dx / width, 2.0)) * exp(-pow(dy2 * roundness, 2.0));
@@ -330,8 +338,7 @@ fn fs_beam(in: VSOut) -> @location(0) vec4f {
       mask = subMask * spot;
     } else {
       let stripe = exp(-pow(dx / width, 2.0));
-      let vert = exp(-pow(dy2 * (0.6 + roundness * 0.4), 2.0));
-      mask = vec3f(stripe * mix(1.0, vert, maskRound));
+      mask = vec3f(stripe);
     }
     beamColor *= mix(vec3f(1.0), mask, maskStrength);
   }
